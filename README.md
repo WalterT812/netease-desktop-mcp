@@ -4,7 +4,7 @@
 
 A local stdio MCP server for controlling the NetEase Cloud Music desktop app on Windows, using native WebSocket CDP without ChromeDriver or cookie extraction.
 
-这是独立社区项目，与网易云音乐及网易公司无隶属或合作关系。当前版本为 **0.1.0-alpha.6**，处于早期开发阶段。已通过官方 MCP SDK 的 stdio 连接，在 **Windows 网易云音乐 3.1.39.205426** 上实机验证读取状态、搜索、点播、播放/暂停和上一首/下一首。**红心状态读取已验证，添加或取消红心的写入操作尚未实机测试。** 客户端更新可能改变界面结构并影响兼容性。
+这是独立社区项目，与网易云音乐及网易公司无隶属或合作关系。当前版本为 **0.1.0-alpha.7**，处于早期开发阶段。已通过官方 MCP SDK 的 stdio 连接，在 **Windows 网易云音乐 3.1.39.205426** 上实机验证读取状态、搜索、点播、播放/暂停和上一首/下一首。**红心状态读取已验证，添加或取消红心的写入操作尚未实机测试。** 客户端更新可能改变界面结构并影响兼容性。
 
 ## 工作方式
 
@@ -202,3 +202,5 @@ Windows 网易云音乐 **3.1.39.205426** 已通过官方 SDK stdio 实机检查
 ## 许可证
 
 [MIT](LICENSE) · Copyright (c) 2026 Walter Tang and contributors.
+
+Sidecar 音乐适配器提供循环模式切换：调用原生可见按钮一次，再读取模式确认。支持顺序播放、列表循环、单曲循环与随机播放；过期状态与未确认结果不会自动重试。

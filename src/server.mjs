@@ -15,7 +15,7 @@ export function createServer(controller, {
   onShutdown = () => {}, onDrained = async () => {},
   playlists, player,
 } = {}) {
-  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.6' });
+  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.7' });
   let queue = Promise.resolve();
   let stopped = false;
   let shutdownPromise;

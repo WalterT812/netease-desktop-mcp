@@ -1,6 +1,13 @@
 import {setTimeout as delay} from 'node:timers/promises';
 export class PlayerController {
   constructor(adapter,music){this.adapter=adapter;this.music=music;}
+  async cycleMode(expectedMode){
+    const modes=['playOrder','playCycle','playOneCycle','playRandom'];
+    if(!modes.includes(expectedMode))throw Error('INVALID_ARGUMENT');
+    await this.adapter.playerControl('cycleMode',{expectedMode});
+    for(let i=0;i<10;i++){const s=await this.adapter.playerRead();if(modes.includes(s.mode)&&s.mode!==expectedMode)return {verified:true,mode:s.mode};await delay(150);}
+    throw Error('MODE_NOT_VERIFIED: Refresh the player before trying again.');
+  }
   async seek(trackId,seconds){
     if(typeof trackId!=='string'||!/^\d+$/.test(trackId)||typeof seconds!=='number'||!Number.isFinite(seconds)||seconds<0)throw Error('INVALID_ARGUMENT');
     await this.adapter.playerControl('seek',{trackId,seconds});

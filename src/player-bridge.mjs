@@ -1,11 +1,20 @@
-// Read-only projection of the verified desktop store. Never return account profiles.
+// Verified player projection and narrowly scoped controls. Never return account profiles.
 export function playerBridge(action,args={}) {
-  if(!['read','seek','volume'].includes(action))throw Error('UNKNOWN_ACTION');
+  if(!['read','seek','volume','cycleMode'].includes(action))throw Error('UNKNOWN_ACTION');
   if(!Array.from(document.scripts).some(s=>/\/app\.chunk\.d4e863d\.js(?:$|\?)/.test(s.src)))throw Error('UNSUPPORTED_PLAYLIST_CLIENT');
   const node=document.querySelector('[data-testid="tid_createplaylist_section"]');
   let fiber=node?.[Object.keys(node).find(k=>k.startsWith('__reactInternalInstance')||k.startsWith('__reactFiber'))],store;
   for(let depth=0;fiber&&depth++<100;fiber=fiber.return){const candidate=fiber.memoizedProps?.value?.store;if(typeof candidate?.getState==='function'){store=candidate;break;}}
   const p=store?.getState()?.playing;if(!p)throw Error('UNSUPPORTED_PLAYLIST_CLIENT');
+  if(action==='cycleMode'){
+    const labels={playOrder:'顺序播放',playCycle:'列表循环',playOneCycle:'单曲循环',playRandom:'随机播放'};
+    if(typeof args.expectedMode!=='string'||!Object.prototype.hasOwnProperty.call(labels,args.expectedMode))throw Error('INVALID_ARGUMENT');
+    if(p.playingMode!==args.expectedMode)throw Error('UNSUPPORTED_CONTROL_LAYOUT');
+    const matches=[...document.querySelectorAll('.default-bar-wrapper span[title]')].filter(s=>s.title===labels[p.playingMode]&&s.getClientRects().length);
+    const button=matches.length===1?matches[0].closest('button'):null;
+    if(!button||button.disabled)throw Error('UNSUPPORTED_CONTROL_LAYOUT');
+    button.click();return {dispatched:true};
+  }
   const sliders=[...document.querySelectorAll('input[type="range"][_nk="os9s91"]')];
   const slider=sliders.length===1?sliders[0]:null;
   const position=slider&&Number(slider.getAttribute('max'))===p.resourceDuration?Number(slider.value):NaN;
