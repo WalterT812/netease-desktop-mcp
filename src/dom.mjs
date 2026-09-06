@@ -10,19 +10,42 @@ export function inspectDom(action, args = {}) {
   };
   const text = e => (e?.textContent ?? '').replace(/\s+/g, ' ').trim();
   const player = () => one('[id="btn_pc_minibar_play"]');
+  const analytics = element => {
+    try { return JSON.parse(element?.getAttribute('data-log') || '{}'); } catch { return {}; }
+  };
+  const eventButton = (oid, root) => {
+    const found = all('button[data-log]', root).filter(e => analytics(e).oid === oid);
+    if (found.length > 1) throw new Error('AMBIGUOUS_CONTROL');
+    return found[0] ?? null;
+  };
   const controls = () => {
     const play = player();
+    const bar = play.closest('.default-bar-wrapper, .vinyl-page-bar-wrapper');
+    if (bar) return [eventButton('btn_pc_like', bar), eventButton('btn_pc_previous', bar), play, eventButton('btn_pc_next', bar)];
     const buttons = [...play.parentElement.querySelectorAll('button')].filter(visible);
-    // Four-button layout must match the reference adapter exactly.
+    // Legacy fallback; modern layouts use exact event identities within the active bar.
     if (buttons.length !== 4 || buttons[2] !== play) throw new Error('UNSUPPORTED_CONTROL_LAYOUT');
     return buttons;
   };
-  const label = () => text(one('[class*="songPlayInfo_"] .title'));
+  const song = () => {
+    const info = one('[class*="songPlayInfo_"]');
+    const title = text(one('.title', info));
+    const artists = text(info.querySelector('.author'));
+    return { title, artists: artists || null, trackLabel: artists ? `${title} — ${artists}` : title };
+  };
+  const label = () => song().trackLabel;
   const liked = () => {
     const button = controls()[0];
+    if (!button) return null;
     const pressed = button.getAttribute('aria-pressed');
     if (pressed === 'true') return true;
     if (pressed === 'false') return false;
+    const log = analytics(button);
+    if (log.oid === 'btn_pc_like' && button.querySelector('[aria-label="like_number"]')) {
+      // The documented analytics field describes the available action: 1=like, 0=unlike.
+      if (log.params?.type === '1') return false;
+      if (log.params?.type === '0') return true;
+    }
     // Generic "喜欢" tooltips and unknown analytics fields are not state evidence.
     for (const attr of ['title', 'aria-label']) {
       const value = button.getAttribute(attr);
@@ -33,13 +56,18 @@ export function inspectDom(action, args = {}) {
   };
   const playing = () => {
     const button = player();
+    const log = analytics(button);
+    if (log.oid === 'btn_pc_minibar_play') {
+      if (log.params?.type === 'play' && button.querySelector('[aria-label="play"]')) return false;
+      if (log.params?.type === 'pause' && button.querySelector('[aria-label="pause"]')) return true;
+    }
     if (button.classList.contains('play-pause-btn')) return true;
     const labels = [button.getAttribute('title'), button.getAttribute('aria-label')];
     if (labels.some(v => ['暂停', 'Pause'].includes(v))) return true;
     if (labels.some(v => ['播放', 'Play', '继续播放'].includes(v))) return false;
     return null;
   };
-  const getStatus = () => ({ trackLabel: label(), playing: playing(), liked: liked() });
+  const getStatus = () => ({ ...song(), playing: playing(), liked: liked() });
   const results = () => {
     const root = one('[id="page_pc_search_result"]');
     const query = text(root.querySelector('.keyword'));
@@ -73,7 +101,9 @@ export function inspectDom(action, args = {}) {
     }
     case 'skip': {
       if (!['next', 'previous'].includes(args.direction)) throw new Error('INVALID_ARGUMENT');
-      controls()[args.direction === 'next' ? 3 : 1].click();
+      const button = controls()[args.direction === 'next' ? 3 : 1];
+      if (!button) throw new Error('CONTROL_NOT_FOUND');
+      button.click();
       return { dispatched: true };
     }
     case 'focus_search': {

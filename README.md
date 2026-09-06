@@ -4,7 +4,7 @@
 
 A local stdio MCP server for controlling the NetEase Cloud Music desktop app on Windows, using native WebSocket CDP without ChromeDriver or cookie extraction.
 
-这是独立社区项目，与网易云音乐及网易公司无隶属或合作关系。当前版本为 **0.1.0-alpha.1**，处于早期开发阶段。自动化验收范围为合成 DOM、MCP 协议及控制器测试；**网易云音乐 3.1.39 的真机连接、播放和红心操作尚未验证**。客户端更新可能改变界面结构并影响兼容性。
+这是独立社区项目，与网易云音乐及网易公司无隶属或合作关系。当前版本为 **0.1.0-alpha.2**，处于早期开发阶段。已通过官方 MCP SDK 的 stdio 连接，在 **Windows 网易云音乐 3.1.39.205426** 上实机验证读取状态、搜索、点播、播放/暂停和上一首/下一首。**红心状态读取已验证，添加或取消红心的写入操作尚未实机测试。** 客户端更新可能改变界面结构并影响兼容性。
 
 ## 工作方式
 
@@ -29,13 +29,13 @@ Windows 网易云音乐客户端
 | `netease_play_result` | 播放搜索结果 |
 | `netease_set_playback` | 设置播放或暂停 |
 | `netease_skip_track` | 上一首或下一首 |
-| `netease_set_liked` | 设置当前歌曲的红心状态 |
+| `netease_set_liked` | 设置当前歌曲的红心状态；写入尚未实机测试 |
 
 红心操作必须携带从当前状态取得的 `trackKey`。无法确认当前歌曲或红心状态时，工具拒绝修改，避免误操作其他歌曲。它提供“设置为喜欢 / 不喜欢”的语义，不盲目切换按钮。
 
-**`trackKey` 是客户端当前可见歌曲标签的哈希，不是网易云歌曲唯一 ID。** 它用于发现可见标签发生变化；标签内容取决于客户端界面，可能不包含完整歌手信息，也无法区分标签相同的不同歌曲或版本。切歌及点播的状态核验同样依赖这些可见信息。首版尚未真机验证这套识别方式，不应把 `trackKey` 当作跨歌曲版本或跨会话的可靠身份凭证。
+**`trackKey` 是客户端当前可见歌曲标签的哈希，不是网易云歌曲唯一 ID。** 在已验证的新布局中，分别读取可见歌曲名和歌手，再组成标签。它可以发现标签变化，但无法区分标签相同的不同歌曲或录音版本，也无法补全界面未显示的信息。切歌及点播的状态核验同样依赖这些可见信息；不应把 `trackKey` 当作跨歌曲版本或跨会话的可靠身份凭证。
 
-首版不包含个人歌单增删、账号管理、下载音乐或完整听歌历史分析。同一时间只使用一个控制会话；操作期间请避免同时使用另一个 MCP 实例或手动改变页面。
+首版不包含个人歌单增删、账号管理、下载音乐或完整听歌历史分析。每个 MCP 会话内部按顺序执行完整操作；Windows 命名管道提供按调试端口区分的跨进程互斥，同一时间只允许一个控制操作。操作结束立即释放，进程退出时由系统回收，不会留下需要手动删除的锁文件。另一个会话正在操作时会返回忙碌错误；请等它结束，并避免同时手动改变页面。
 
 ## 环境要求
 
@@ -43,7 +43,7 @@ Windows 网易云音乐客户端
 - Node.js **24 或更高版本**，附带 npm。
 - 支持本地 stdio MCP 的 AI 客户端。
 
-单元测试可在 Windows 和 Linux 上运行；真实音乐控制需要 Windows 网易云客户端。CI 测试通过不等于所有客户端版本都已实机验证。
+真实音乐控制需要 Windows 网易云客户端。自动测试已在 Windows / Node.js 24 上运行；Linux 尚未运行验收，GitHub Actions 尚未启用。自动测试与客户端实机兼容性是不同的验收范围。
 
 ## 本地启动
 
@@ -66,7 +66,7 @@ pwsh -File .\scripts\Start-CloudMusic.ps1 -CloudMusicPath 'D:\Apps\CloudMusic\cl
 pwsh -File .\scripts\Start-CloudMusic.ps1 -CloudMusicPath 'D:\Apps\CloudMusic\cloudmusic.exe' -Restart
 ```
 
-默认调试端口为 `9229`；脚本支持 `-Port 9229`。这些命令供用户在自己的电脑上按需执行，项目不保证当前客户端版本接受调试参数。
+默认调试端口为 `9229`；脚本支持 `-Port 9229`。这些命令供用户在自己的电脑上按需执行；除已验证的版本外，其他客户端版本是否接受调试参数仍需确认。
 
 启动 MCP 服务器前指定客户端可执行文件路径。Windows 上会校验调试端口归属，防止连接其他程序：
 
@@ -134,13 +134,19 @@ MCP 会把操作所需的歌曲信息返回给所连接的 AI 客户端。该客
 
 自动化依赖网易云当前界面的可访问结构。找不到目标或无法确认状态时，应查看工具错误并检查客户端界面。请勿把播放请求已发出视为已实际听到声音；歌曲版权、会员权限及网络状态仍由网易云决定。
 
-关闭 MCP 不应关闭网易云客户端。重启网易云至正常模式可以结束本次调试会话。安全问题的报告方式见 [SECURITY.md](SECURITY.md)。
+关闭 MCP 会断开控制连接，不会关闭网易云客户端。重启网易云至正常模式可以结束本次调试会话。安全问题的报告方式见 [SECURITY.md](SECURITY.md)。
+
+## 验证范围
+
+Windows 网易云音乐 **3.1.39.205426** 已通过官方 SDK stdio 实机检查：分别读取歌曲名/歌手、播放状态和红心状态，搜索、点播、暂停/继续播放，以及双向切歌。检查结束后已恢复检查前的曲目和暂停状态，未进行红心写入。这里的播放成功表示客户端界面状态核验成功，不保证音频设备实际发声，也不证明收藏已持久化到服务器。
+
+适配器在新布局的 `default-bar-wrapper` 内按 `data-log` 的 `oid` 定位红心、上一首和下一首按钮，避免依赖按钮排列顺序；歌曲标签来自独立的 `.title` 与 `.author`。这些实现依据只适用于相应布局，不能推定后续版本兼容。
 
 ## 开发与贡献
 
 实现使用 JavaScript ESM、官方 `@modelcontextprotocol/sdk`、Zod 和 Node.js 原生 WebSocket。提交前运行 `npm test`。涉及 UI 定位或客户端兼容性的改动，请说明 Windows 版本、网易云版本、复现步骤和实机验证范围；不要提交账号信息、Cookie、个人歌曲历史或未经脱敏的调试日志。
 
-首版已在 Windows / Node.js 24 上通过 27 项本地自动测试；Linux 尚未运行验收。GitHub Actions **尚未启用**，Windows/Linux 工作流模板位于 [docs/ci-workflow.yml](docs/ci-workflow.yml)。有工作流写入权限的维护者可将模板放入 `.github/workflows/test.yml` 后启用。不要把该模板的存在视为 CI 已通过。
+本地自动测试覆盖合成 DOM、控制器、连接与互斥逻辑，以及官方 SDK 的内存 transport 和 stdio 协议。GitHub Actions **尚未启用**，Windows/Linux 工作流模板位于 [docs/ci-workflow.yml](docs/ci-workflow.yml)。有工作流写入权限的维护者可将模板放入 `.github/workflows/test.yml` 后启用。不要把该模板的存在视为 CI 已通过。
 
 本项目参考了 [Ocrosoft/NetEaseMusic-MCP](https://github.com/Ocrosoft/NetEaseMusic-MCP) 的功能设计与界面定位思路，独立实现直接 CDP 连接，不使用其 ChromeDriver 控制实现。相关致谢和许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 

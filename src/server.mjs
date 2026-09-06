@@ -7,9 +7,23 @@ import { z } from 'zod';
 import { DesktopAdapter } from './adapter.mjs';
 import { MusicController } from './controller.mjs';
 
-export function createServer(controller) {
-  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.1' });
+export function createServer(controller, {
+  beforeOperation = async () => {}, afterOperation = async () => {},
+  onShutdown = () => {}, onDrained = async () => {},
+} = {}) {
+  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.2' });
   let queue = Promise.resolve();
+  let stopped = false;
+  let shutdownPromise;
+  server.shutdown = () => {
+    if (!shutdownPromise) {
+      stopped = true;
+      onShutdown();
+      shutdownPromise = queue.then(onDrained);
+    }
+    return shutdownPromise;
+  };
+  server.server.onclose = () => { server.shutdown().catch(() => {}); };
   const register = (name, description, schema, options, operation) => {
     server.registerTool(name, {
       title: name, description, inputSchema: z.object(schema).strict(),
@@ -17,11 +31,18 @@ export function createServer(controller) {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true, ...options },
     }, args => {
       const job = queue.then(async () => {
+        let acquired = false;
         try {
+          if (stopped) throw new Error('SERVER_CLOSED');
+          await beforeOperation();
+          acquired = true;
+          if (stopped) throw new Error('SERVER_CLOSED');
           const result = await operation(args);
           return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: { result } };
         } catch (error) {
           return { isError: true, content: [{ type: 'text', text: error.message }] };
+        } finally {
+          if (acquired) await afterOperation();
         }
       });
       queue = job.catch(() => {});
@@ -47,13 +68,27 @@ export function createServer(controller) {
   return server;
 }
 
+export function closeOnInputEnd(input, server) {
+  let closing = false;
+  const close = () => {
+    if (closing) return;
+    closing = true;
+    server.shutdown().then(() => server.close()).catch(() => {});
+  };
+  for (const event of ['end', 'close', 'error']) input.once(event, close);
+}
+
 async function main() {
   const adapter = new DesktopAdapter();
-  const server = createServer(new MusicController(adapter));
-  server.server.onclose = () => { adapter.disconnect().catch(() => {}); };
+  const server = createServer(new MusicController(adapter), {
+    beforeOperation: () => adapter.beginOperation(), afterOperation: () => adapter.endOperation(),
+    onShutdown: () => adapter.stop(), onDrained: () => adapter.disconnect(),
+  });
+  closeOnInputEnd(process.stdin, server);
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => {
+    const drained = server.shutdown();
     await server.close();
-    await adapter.disconnect();
+    await drained;
     process.exit(0);
   });
   await server.connect(new StdioServerTransport());

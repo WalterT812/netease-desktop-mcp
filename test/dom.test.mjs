@@ -63,3 +63,35 @@ test('search results stay partial and exclude rows without an identity', () => {
   assert.equal(result.partial, true);
   assert.deepEqual(result.items, [{ index: '1', title: 'Song', artists: 'Artist', album: 'Album' }]);
 });
+
+function modernFixture() {
+  fixture();
+  document.body.innerHTML = `<div class="SearchWrapper_x"><input></div><div class="default-bar-wrapper">
+    <div class="songPlayInfo_x"><span data-testid="tid_minibar_title"><span class="title">Example Song</span><span class="author">Example Artist</span></span></div>
+    <button id="modern-heart" data-log='{"oid":"btn_pc_like","params":{"type":"1"}}'><span aria-label="like_number"></span></button>
+    <div class="middle"><div class="btns"><button><span aria-label="shuffle"></span></button>
+      <button data-log='{"oid":"btn_pc_previous","params":{}}'><span aria-label="pre"></span></button>
+      <button id="btn_pc_minibar_play" data-log='{"oid":"btn_pc_minibar_play","params":{"type":"play"}}'><span aria-label="play"></span></button>
+      <button data-log='{"oid":"btn_pc_next","params":{}}'><span aria-label="next"></span></button>
+      <button><span aria-label="playlist"></span></button></div></div></div>`;
+}
+test('modern five-button player reads separate artist and relocated heart', () => {
+  modernFixture();
+  const status = inspectDom('status');
+  assert.equal(status.trackLabel, 'Example Song — Example Artist');
+  assert.equal(status.playing, false);
+  assert.equal(status.liked, false);
+});
+test('modern next uses its exact event identity, not a button offset', () => {
+  modernFixture();
+  const next = [...document.querySelectorAll('button')].find(e => e.getAttribute('data-log')?.includes('btn_pc_next'));
+  let clicked = false;
+  next.click = () => { clicked = true; };
+  inspectDom('skip', { direction: 'next' });
+  assert.equal(clicked, true);
+});
+test('heart analytics on an unrelated button cannot supply like state', () => {
+  modernFixture();
+  document.getElementById('modern-heart').setAttribute('data-log', '{"oid":"unrelated","params":{"type":"1"}}');
+  assert.equal(inspectDom('status').liked, null);
+});

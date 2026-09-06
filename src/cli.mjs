@@ -22,6 +22,7 @@ if (!command || command === '--help' || command === 'help') {
   const adapter = new DesktopAdapter();
   const controller = new MusicController(adapter);
   try {
+    await adapter.beginOperation();
     let result;
     switch (command) {
       case 'status': result = await controller.status(); break;

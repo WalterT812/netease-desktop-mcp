@@ -6,6 +6,72 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createServer } from '../src/server.mjs';
+import { DesktopAdapter } from '../src/adapter.mjs';
+import { PassThrough } from 'node:stream';
+import { closeOnInputEnd } from '../src/server.mjs';
+
+test('stdio EOF immediately stops the server and closes after draining', async () => {
+  const input = new PassThrough();
+  const events = [];
+  const drained = Promise.withResolvers();
+  closeOnInputEnd(input, {
+    shutdown() { events.push('stop'); return drained.promise; },
+    async close() { events.push('close'); },
+  });
+  input.resume();
+  input.end();
+  await delay(10);
+  assert.deepEqual(events, ['stop']);
+  drained.resolve();
+  await delay(10);
+  assert.deepEqual(events, ['stop', 'close']);
+});
+
+test('transport closure cancels queued operations and drains before final cleanup', async () => {
+  const events = [];
+  const started = Promise.withResolvers();
+  const gate = Promise.withResolvers();
+  const server = createServer({
+    async status() { events.push('start'); started.resolve(); await gate.promise; events.push('end'); return {}; },
+    async skip() { events.push('unexpected-skip'); return {}; },
+  }, {
+    beforeOperation: async () => events.push('acquire'),
+    afterOperation: async () => events.push('release'),
+    onShutdown: () => events.push('stop'),
+    onDrained: async () => events.push('cleanup'),
+  });
+  const client = new Client({ name: 'shutdown-test', version: '1.0.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(b);
+  await client.connect(a);
+  const first = client.callTool({ name: 'netease_get_status', arguments: {} }).catch(() => {});
+  await started.promise;
+  const second = client.callTool({ name: 'netease_skip_track', arguments: { direction: 'next' } }).catch(() => {});
+  await delay(20);
+  await client.close();
+  assert.deepEqual(events, ['acquire', 'start', 'stop']);
+  gate.resolve();
+  await server.shutdown();
+  await Promise.all([first, second]);
+  assert.deepEqual(events, ['acquire', 'start', 'stop', 'end', 'release', 'cleanup']);
+  await server.shutdown();
+  assert.equal(events.filter(e => e === 'cleanup').length, 1);
+});
+
+test('stopped desktop adapter refuses reconnection and preserves lease until cleanup', async () => {
+  const adapter = new DesktopAdapter({ executable: 'fixture.exe' });
+  let released = false;
+  let disconnected = false;
+  adapter.lease.release = async () => { released = true; };
+  adapter.cdp = { disconnect() { disconnected = true; } };
+  adapter.stop();
+  assert.equal(disconnected, true);
+  assert.equal(released, false);
+  await assert.rejects(adapter.run('status'), /ADAPTER_CLOSED/);
+  await assert.rejects(adapter.beginOperation(), /ADAPTER_CLOSED/);
+  await adapter.disconnect();
+  assert.equal(released, true);
+});
 
 async function connectInMemory(t, controller) {
   const server = createServer(controller);
