@@ -2,14 +2,14 @@
 
 ## Scope
 
-`netease-desktop-mcp` is a local stdio server that controls a Windows music client through its debug interface. It is intended for trusted controllers on the same computer, with one operation active at a time. Version 0.1.0-alpha.4 remains an early development release.
+`netease-desktop-mcp` is a local stdio server that controls a Windows music client through its debug interface. It is intended for trusted controllers on the same computer, with one operation active at a time. Version 0.1.0-alpha.8 remains an early development release.
 
 The debug interface is a control capability, not a public API. Keep it bound to a loopback address. Do not expose it to a LAN, the internet, a reverse proxy, or an untrusted remote MCP client.
 
 ## Expected boundaries
 
 - Do not request, extract, store, or log account passwords, cookies, tokens, or browser credentials.
-- Use only the music-client target and the UI operations required by the requested action.
+- Use only the music-client target and fixed UI or background API operations required by the requested action.
 - Read-only status queries must not change playback or account data.
 - A like/unlike request must include the current track's `trackKey`. Refuse the write when the track or like state is unknown or no longer matches.
 - Do not treat an issued UI command as proof of a successful result. Check the resulting state where the operation supports verification.
@@ -20,7 +20,15 @@ The debug interface is a control capability, not a public API. Keep it bound to 
 
 These are the project's intended implementation and contribution boundaries. Compatibility with a particular client version must be verified separately; a successful unit test run does not establish that boundary by itself.
 
-`trackKey` is a hash of the currently visible track label, not a NetEase song ID. The verified layout supplies separate visible title and artist fields, which are combined into the label. Different recordings can still share that label, and information absent from the UI cannot be inferred. This check detects changes in visible text; it does not establish a unique recording identity. Playback verification also relies on visible labels and UI state.
+`trackKey` is a hash of the currently visible track label, not a NetEase song ID. The verified layout supplies separate visible title and artist fields, which are combined into the label. Different recordings can still share that label, and information absent from the UI cannot be inferred. This check detects changes in visible text; it does not establish a unique recording identity. Like and skip verification retain this limitation. Background catalog playback additionally verifies the selected exact song ID, but its new live playback path has not yet been accepted.
+
+## Catalog and playlist member boundaries
+
+Search uses a fixed cached client API module with client caches disabled, correlating each response with its own query. It does not navigate, inject input or change playback. A disposable Webpack loader entry is removed immediately after capturing the already-loaded fixed module. Unknown builds or module shapes refuse the operation; the bundle filename remains a compatibility check, not authenticity evidence. Arbitrary endpoints, account credentials and storage access are not exposed.
+
+Adding tracks requires NETEASE_ENABLE_PLAYLIST_ADD=1 and explicit user authorization. The bridge checks exact string IDs, full playlist name, current account ownership, system/collected/protected status and complete original members. Only missing selected IDs are sent, in at most one add request. Success requires an uncached client API readback whose complete member set exactly matches original members plus selected tracks, with ownership, name and privacy retained. This is client API evidence, not an independent network audit or a transaction excluding other devices.
+
+An uncertain add retains the bound request in the current process. A repeated identical request can only read back; it never resends the mutation. Other requests for that playlist remain blocked. This record is not durable across process restarts; neither restarting nor losing a response authorizes another write. Native requests already sent may continue after a transport timeout. Read actual membership before considering any later action. Search-result playback also consumes its token before dispatch, checks exact metadata and leaves the existing queue intact; it must not automatically retry.
 
 ## Playlist creation boundaries
 
@@ -35,6 +43,8 @@ The page bridge uses a fixed own-playlist action and never accepts arbitrary dis
 Success requires a refreshed list without the target and matching retained playlist IDs, names, track counts and update times. This is metadata verification, not a per-track integrity audit. Client refresh failure or concurrent manual changes can prevent reliable verification. There is no transaction spanning the controller and remote service. A track-list backup cannot restore playlist IDs or followers. MCP annotations are hints; runtime checks enforce the restrictions. User authorization must be obtained by the trusted controller before execution.
 
 ## Verification scope
+
+alpha.8 passed 86 automated tests and live SDK stdio checks for background search correlation, exact-ID addition to one authorized private playlist, independent member readback and duplicate prevention. Playback identity, playing state, volume and mode were unchanged by that acceptance. Preserved collections were compared by metadata, not every track. Native Codex MCP also successfully read the added member and a distinct search result. New background search-result playback has synthetic coverage only; it was not live-tested because this acceptance did not authorize changing playback.
 
 On Windows NetEase Cloud Music 3.1.39.205426, official SDK stdio checks verified separate title/artist reads, playback and heart-state reads, search, playing a search result, pause/play, and next/previous track. The original track and paused state were restored after the check. **Like/unlike writes have not been tested on the live client.** UI verification does not prove audible output or server-side persistence.
 

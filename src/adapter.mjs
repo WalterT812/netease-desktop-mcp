@@ -1,10 +1,10 @@
-import { setTimeout as delay } from 'node:timers/promises';
 import { Cdp } from './cdp.mjs';
 import { inspectDom } from './dom.mjs';
 import { inspectWindows } from './windows.mjs';
 import { ControllerLease } from './lease.mjs';
 import { playlistBridge } from './playlist-bridge.mjs';
 import { playerBridge } from './player-bridge.mjs';
+import { catalogBridge } from './catalog-bridge.mjs';
 
 export class DesktopAdapter {
   constructor({ executable = process.env.NETEASE_MUSIC_PATH, port = Number(process.env.NETEASE_MCP_PORT ?? 9229) } = {}) {
@@ -80,24 +80,13 @@ export class DesktopAdapter {
     await this.connect();
     this.assertOpen();
     const cdp = this.cdp;
-    if (action !== 'search') return cdp.evaluate(inspectDom, { action, args });
-    const focused = await cdp.evaluate(inspectDom, { action: 'focus_search' });
-    if (!focused?.focused) throw new Error('SEARCH_FOCUS_FAILED');
-    await cdp.send('Input.insertText', { text: args.query });
-    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-    const wait = async operation => {
-      const end = Date.now() + 6000;
-      do {
-        this.assertOpen();
-        try { return await cdp.evaluate(inspectDom, { action: operation, args }); }
-        catch (error) { if (!['CONTROL_NOT_FOUND', 'SEARCH_PENDING'].includes(error.message)) throw error; }
-        await delay(150);
-      } while (Date.now() < end);
-      throw new Error('SEARCH_TIMEOUT');
-    };
-    await wait('search_tab');
-    return wait('search_results');
+    if (action === 'search' || (action === 'play_result' && args.item?.id)) return this.catalogRun(action, args);
+    return cdp.evaluate(inspectDom, { action, args });
+  }
+  async catalogRun(action, args = {}) {
+    await this.connect();
+    this.assertOpen();
+    return this.cdp.evaluate(catalogBridge, { action, args }, 70000);
   }
   async playlistRun(action, args = {}) {
     await this.connect();

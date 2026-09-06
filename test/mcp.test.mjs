@@ -10,6 +10,29 @@ import { DesktopAdapter } from '../src/adapter.mjs';
 import { PassThrough } from 'node:stream';
 import { closeOnInputEnd } from '../src/server.mjs';
 import { PlaylistController } from '../src/playlists.mjs';
+import { CatalogController } from '../src/catalog.mjs';
+
+test('SDK catalog schemas expose exact IDs, bounded members and opt-in writes', async t => {
+  const actions = [];
+  const catalog = new CatalogController({ async catalogRun(action, args) {
+    actions.push({ action, args });
+    if (action === 'playlist_tracks') return { id: '10', title: 'Target', owned: true, system: false, trackIds: ['7'], trackCount: 1 };
+    return { verified: true, playlistId: '10', addedIds: ['7'], alreadyPresentIds: [], trackCount: 1 };
+  } }, { addEnabled: true });
+  const server = createServer({}, { catalog }), client = new Client({ name: 'catalog-contract', version: '1.0.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  t.after(async () => { await client.close(); await server.close(); });
+  await server.connect(b); await client.connect(a);
+  const listed = await client.listTools();
+  assert.equal(listed.tools.find(t => t.name === 'netease_search').annotations.readOnlyHint, true);
+  const invalid = await client.callTool({ name: 'netease_add_tracks_to_playlist', arguments: { playlistId: '10', expectedName: 'Target', trackIds: [7] } });
+  assert.equal(invalid.isError, true); assert.equal(actions.length, 0);
+  const added = await client.callTool({ name: 'netease_add_tracks_to_playlist', arguments: { playlistId: '10', expectedName: 'Target', trackIds: ['7'] } });
+  assert.equal(added.structuredContent.result.verified, true);
+  const members = await client.callTool({ name: 'netease_get_playlist_tracks', arguments: { playlistId: '10' } });
+  assert.deepEqual(members.structuredContent.result.trackIds, ['7']);
+  assert.equal(members.structuredContent.result.complete, true);
+});
 
 test('SDK playlist tools preserve protections, schemas and single-use deletion semantics', async t => {
   const state = { accountId: '9', created: [{ id: '11', title: 'Remove', trackCount: 2, updateTime: 1, owned: true, system: false }], collected: [], system: { id: '1', title: 'Liked', trackCount: 4 } };
@@ -179,7 +202,7 @@ test('concurrent SDK tool calls serialize entire asynchronous controller operati
   ]);
 });
 
-test('real SDK stdio handshake, fourteen tools, and structured tool failure', async t => {
+test('real SDK stdio handshake, sixteen tools, and structured tool failure', async t => {
   const transport = new StdioClientTransport({ command: process.execPath,
     args: [fileURLToPath(new URL('../src/server.mjs', import.meta.url))],
     env: { ...process.env, NETEASE_MUSIC_PATH: '' }, stderr: 'pipe' });
@@ -187,7 +210,7 @@ test('real SDK stdio handshake, fourteen tools, and structured tool failure', as
   t.after(() => client.close());
   await client.connect(transport);
   const listed = await client.listTools();
-  assert.equal(listed.tools.length, 14);
+  assert.equal(listed.tools.length, 16);
   assert.equal(listed.tools.find(t => t.name === 'netease_get_status').annotations.readOnlyHint, true);
   const result = await client.callTool({ name: 'netease_get_status', arguments: {} });
   assert.equal(result.isError, true);

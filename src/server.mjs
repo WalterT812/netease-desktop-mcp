@@ -7,15 +7,16 @@ import { z } from 'zod';
 import { DesktopAdapter } from './adapter.mjs';
 import { MusicController } from './controller.mjs';
 import { PlaylistController } from './playlists.mjs';
+import { CatalogController } from './catalog.mjs';
 import {PlayerController} from './player.mjs';
 import {registerPlayerResource,PLAYER_URI} from './widget.mjs';
 
 export function createServer(controller, {
   beforeOperation = async () => {}, afterOperation = async () => {},
   onShutdown = () => {}, onDrained = async () => {},
-  playlists, player,
+  playlists, player, catalog,
 } = {}) {
-  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.7' });
+  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.8' });
   let queue = Promise.resolve();
   let stopped = false;
   let shutdownPromise;
@@ -61,10 +62,10 @@ export function createServer(controller, {
   register('netease_seek','Seek the current track to seconds and verify the position. Requires exact trackId from a fresh player read; changed tracks or unsupported progress refuse the write.',{trackId:z.string().regex(/^\d+$/),seconds:z.number().finite().min(0)},{idempotentHint:true},args=>player.seek(args.trackId,args.seconds));
   register('netease_set_volume','Set NetEase application volume from 0 to 100 and verify the client volume. Does not change Windows system volume.',{percent:z.number().finite().min(0).max(100)},{idempotentHint:true},args=>player.volume(args.percent));
   register('netease_get_status', 'Read the current visible song label, playback and heart state. null means unknown. trackKey hashes the visible title/artist, not a unique catalog ID; identical labels are indistinguishable.', {}, { readOnlyHint: true, idempotentHint: true }, () => controller.status());
-  register('netease_search', 'Search songs in the desktop UI. Changes the visible search page; returns a partial list and a token valid for two minutes in this MCP session. Does not play music.', {
+  register('netease_search', 'Search the music catalog through the desktop client background API, with caches disabled. Returns exact song IDs, artist and album metadata plus a two-minute session token. No mouse, keyboard, focus or page navigation. Does not change playback.', {
     query: z.string().trim().min(1).max(200), limit: z.number().int().min(1).max(30).default(10),
-  }, {}, ({ query, limit }) => controller.search(query, limit));
-  register('netease_play_result', 'Play an exact row from the latest search. Requires its token and string index. Refuses changed/stale rows. Success means the UI shows the chosen title/artist playing; it does not prove audible output.', {
+  }, { readOnlyHint: true }, ({ query, limit }) => controller.search(query, limit));
+  register('netease_play_result', 'Play an exact catalog ID from the latest search through the client background action. Requires its token and string index; rechecks metadata and verifies the actual playing catalog ID. Adds the selected song to the current queue; does not isolate later playback. Does not prove audible output. Never automatically retry an uncertain result.', {
     searchToken: z.string().uuid(), index: z.string().min(1).max(12),
   }, {}, ({ searchToken, index }) => controller.playResult(searchToken, index));
   register('netease_set_playback', 'Explicitly play or pause and verify the UI state. Does not blindly toggle. Unknown UI state refuses the action.', {
@@ -77,6 +78,13 @@ export function createServer(controller, {
     liked: z.boolean(), trackKey: z.string().regex(/^[a-f0-9]{24}$/),
   }, { destructiveHint: true, idempotentHint: true }, ({ liked, trackKey }) => controller.setLiked(liked, trackKey));
   const library = () => { if (!playlists) throw new Error('PLAYLIST_CONTROLLER_UNAVAILABLE'); return playlists; };
+  const catalogController = () => { if (!catalog) throw new Error('CATALOG_UNAVAILABLE'); return catalog; };
+  register('netease_get_playlist_tracks', 'Read exact playlist member IDs from an uncached client API response. Verifies the full member count before returning a bounded slice. Does not navigate or alter playback.', {
+    playlistId: z.string().regex(/^[1-9]\d{0,19}$/), offset: z.number().int().min(0).max(100000).default(0), limit: z.number().int().min(1).max(1000).default(100),
+  }, { readOnlyHint: true, idempotentHint: true }, ({ playlistId, offset, limit }) => catalogController().tracks(playlistId, offset, limit));
+  register('netease_add_tracks_to_playlist', 'After explicit user authorization, add exact catalog song IDs to an owned playlist matching its full name. Requires NETEASE_ENABLE_PLAYLIST_ADD=1. Refuses system, collected and protected playlists. Skips existing songs, dispatches at most once and verifies exact members with uncached readback. On uncertain outcomes only reads follow; do not blindly retry or restart to bypass uncertainty. Does not change playback or volume.', {
+    playlistId: z.string().regex(/^[1-9]\d{0,19}$/), expectedName: z.string().min(1).max(500), trackIds: z.array(z.string().regex(/^[1-9]\d{0,19}$/)).min(1).max(50),
+  }, {}, ({ playlistId, expectedName, trackIds }) => catalogController().add(playlistId, expectedName, trackIds));
   register('netease_create_playlist', 'Create one empty owned playlist after user authorization. Private by default. Requires NETEASE_ENABLE_PLAYLIST_CREATE=1. Refuses an existing exact name; verifies returned ID, ownership, privacy and preservation of other playlists. Never retry an uncertain result automatically.', {
     name: z.string().trim().min(1).max(40), isPrivate: z.boolean().default(true),
   }, {}, ({ name, isPrivate }) => library().create(name, isPrivate));
@@ -104,6 +112,7 @@ async function main() {
   const adapter = new DesktopAdapter();
   const music=new MusicController(adapter);
   const server = createServer(music, {
+    catalog: new CatalogController(adapter, { addEnabled: process.env.NETEASE_ENABLE_PLAYLIST_ADD === '1', protectedIds: (process.env.NETEASE_PROTECTED_PLAYLIST_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean) }),
     player:new PlayerController(adapter,music),
     playlists: new PlaylistController(adapter, { enabled: process.env.NETEASE_ENABLE_PLAYLIST_DELETE === '1', createEnabled: process.env.NETEASE_ENABLE_PLAYLIST_CREATE === '1', protectedIds: (process.env.NETEASE_PROTECTED_PLAYLIST_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean) }),
     beforeOperation: () => adapter.beginOperation(), afterOperation: () => adapter.endOperation(),

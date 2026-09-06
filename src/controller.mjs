@@ -55,9 +55,10 @@ export class MusicController {
   async search(query, limit = 10) {
     if (typeof query !== 'string' || !query.trim() || query.length > 200 || !Number.isInteger(limit) || limit < 1 || limit > 30) throw new Error('INVALID_ARGUMENT');
     this.searchState = null;
-    const result = await this.adapter.run('search', { query: query.trim() });
+    const result = await this.adapter.run('search', { query: query.trim(), limit });
+    if (result.query !== query.trim()) throw new Error('STALE_SEARCH: Query and response do not match.');
     this.searchState = { searchToken: randomUUID(), createdAt: Date.now(), ...result, items: result.items.slice(0, limit) };
-    return { searchToken: this.searchState.searchToken, query: result.query, items: this.searchState.items, partial: true, expiresInSeconds: 120 };
+    return { searchToken: this.searchState.searchToken, query: result.query, items: this.searchState.items, partial: result.partial ?? true, source: result.source ?? 'visible_ui', expiresInSeconds: 120 };
   }
   async playResult(searchToken, index) {
     const saved = this.searchState;
@@ -68,6 +69,17 @@ export class MusicController {
     // Consume BEFORE any possible dispatch: even a lost reply must not permit a repeat.
     this.searchState = null;
     await this.adapter.run('play_result', { query: saved.query, item });
+    if (item.id) {
+      const end = Date.now() + this.timeoutMs;
+      do {
+        const before = await this.adapter.playerRead();
+        const state = await this.status();
+        const after = await this.adapter.playerRead();
+        if (before.trackId === item.id && after.trackId === item.id && state.playing === true && state.title === item.title && state.artists === item.artists) return { verified: true, trackId: item.id, state };
+        await delay(this.intervalMs);
+      } while (Date.now() < end);
+      throw new Error('NOT_VERIFIED: Exact catalog ID was not observed playing. Do not automatically retry.');
+    }
     const normalize = value => value.normalize('NFC').replace(/\s+[—–-]\s+/g, ' - ').replace(/\s+/g, ' ').trim();
     if (!item.artists) throw new Error('NOT_VERIFIED: Search result has no artist identity.');
     const expected = normalize(`${item.title} - ${item.artists}`);

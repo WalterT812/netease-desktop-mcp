@@ -80,3 +80,25 @@ test('exact title and artist label is accepted for selection playback', async ()
   const found = await controller.search('Song A');
   assert.equal((await controller.playResult(found.searchToken, '1')).verified, true);
 });
+
+test('a mismatched search response cannot issue a selection token', async () => {
+  const { controller } = setup();
+  const original = controller.adapter.run;
+  controller.adapter.run = async (action, args) => action === 'search' ? { query: 'Previous query', items: [] } : original(action, args);
+  await assert.rejects(controller.search('New query'), /STALE_SEARCH/);
+  assert.equal(controller.searchState, null);
+});
+
+test('backend playback cannot verify the wrong catalog ID with identical labels', async () => {
+  const { controller } = setup();
+  const original = controller.adapter.run;
+  controller.adapter.run = async (action, args) => {
+    const value = await original(action, args);
+    if (action === 'search') value.items = value.items.map(p => ({ ...p, id: '7' }));
+    if (action === 'status') Object.assign(value, { title: 'Song A', artists: 'Artist' });
+    return value;
+  };
+  controller.adapter.playerRead = async () => ({ trackId: '8' });
+  const found = await controller.search('Song A');
+  await assert.rejects(controller.playResult(found.searchToken, '1'), /NOT_VERIFIED/);
+});
