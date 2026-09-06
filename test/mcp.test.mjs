@@ -9,6 +9,35 @@ import { createServer } from '../src/server.mjs';
 import { DesktopAdapter } from '../src/adapter.mjs';
 import { PassThrough } from 'node:stream';
 import { closeOnInputEnd } from '../src/server.mjs';
+import { PlaylistController } from '../src/playlists.mjs';
+
+test('SDK playlist tools preserve protections, schemas and single-use deletion semantics', async t => {
+  const state = { accountId: '9', created: [{ id: '11', title: 'Remove', trackCount: 2, updateTime: 1, owned: true, system: false }], collected: [], system: { id: '1', title: 'Liked', trackCount: 4 } };
+  let dispatches = 0;
+  const playlists = new PlaylistController({ async playlistRun(action) {
+    if (action === 'delete') { dispatches++; state.created = []; return { dispatched: true }; }
+    return structuredClone(state);
+  } }, { enabled: true });
+  const server = createServer({}, { playlists });
+  const client = new Client({ name: 'playlist-contract', version: '1.0.0' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  t.after(async () => { await client.close(); await server.close(); });
+  await server.connect(b); await client.connect(a);
+  const tools = (await client.listTools()).tools;
+  assert.equal(tools.find(t => t.name === 'netease_delete_playlist').annotations.destructiveHint, true);
+  assert.equal(tools.find(t => t.name === 'netease_delete_playlist').annotations.idempotentHint, false);
+  const call = (name, args = {}) => client.callTool({ name, arguments: args });
+  const library = await call('netease_list_playlists');
+  assert.equal(library.structuredContent.result.accountId, undefined);
+  assert.equal((await call('netease_prepare_playlist_delete', { id: '1', expectedName: 'Liked' })).isError, true);
+  const preview = await call('netease_prepare_playlist_delete', { id: '11', expectedName: 'Remove' });
+  const token = preview.structuredContent.result.deleteToken;
+  assert.equal((await call('netease_delete_playlist', { token, id: '20' })).isError, true);
+  const result = await call('netease_delete_playlist', { token });
+  assert.equal(result.structuredContent.result.verified, true);
+  assert.equal((await call('netease_delete_playlist', { token })).isError, true);
+  assert.equal(dispatches, 1);
+});
 
 test('stdio EOF immediately stops the server and closes after draining', async () => {
   const input = new PassThrough();
@@ -150,7 +179,7 @@ test('concurrent SDK tool calls serialize entire asynchronous controller operati
   ]);
 });
 
-test('real SDK stdio handshake, six tools, and structured tool failure', async t => {
+test('real SDK stdio handshake, nine tools, and structured tool failure', async t => {
   const transport = new StdioClientTransport({ command: process.execPath,
     args: [fileURLToPath(new URL('../src/server.mjs', import.meta.url))],
     env: { ...process.env, NETEASE_MUSIC_PATH: '' }, stderr: 'pipe' });
@@ -158,7 +187,7 @@ test('real SDK stdio handshake, six tools, and structured tool failure', async t
   t.after(() => client.close());
   await client.connect(transport);
   const listed = await client.listTools();
-  assert.equal(listed.tools.length, 6);
+  assert.equal(listed.tools.length, 9);
   assert.equal(listed.tools.find(t => t.name === 'netease_get_status').annotations.readOnlyHint, true);
   const result = await client.callTool({ name: 'netease_get_status', arguments: {} });
   assert.equal(result.isError, true);

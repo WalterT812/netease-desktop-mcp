@@ -6,12 +6,14 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { DesktopAdapter } from './adapter.mjs';
 import { MusicController } from './controller.mjs';
+import { PlaylistController } from './playlists.mjs';
 
 export function createServer(controller, {
   beforeOperation = async () => {}, afterOperation = async () => {},
   onShutdown = () => {}, onDrained = async () => {},
+  playlists,
 } = {}) {
-  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.2' });
+  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.3' });
   let queue = Promise.resolve();
   let stopped = false;
   let shutdownPromise;
@@ -65,6 +67,14 @@ export function createServer(controller, {
   register('netease_set_liked', 'Set the current song heart only when explicitly requested. Supply trackKey from a fresh status result. Refuses unknown heart state or changed labels. Visible UI verification is not server-side persistence verification.', {
     liked: z.boolean(), trackKey: z.string().regex(/^[a-f0-9]{24}$/),
   }, { destructiveHint: true, idempotentHint: true }, ({ liked, trackKey }) => controller.setLiked(liked, trackKey));
+  const library = () => { if (!playlists) throw new Error('PLAYLIST_CONTROLLER_UNAVAILABLE'); return playlists; };
+  register('netease_list_playlists', 'Refresh owned, collected and system playlists through the desktop client. Does not move the mouse, focus or navigate. Account identifiers are omitted.', {}, { readOnlyHint: true, idempotentHint: true }, () => library().list());
+  register('netease_prepare_playlist_delete', 'Preview deletion of an exact owned playlist ID and name; returns a single-use token valid for two minutes. Requires NETEASE_ENABLE_PLAYLIST_DELETE=1. Collected, system and configured protected playlists are refused. Preview is not user consent.', {
+    id: z.string().regex(/^\d+$/), expectedName: z.string().min(1).max(500),
+  }, { readOnlyHint: true }, ({ id, expectedName }) => library().prepareDelete(id, expectedName));
+  register('netease_delete_playlist', 'After explicit user authorization, consume a deletion preview token and delete that owned playlist once. Rechecks account, name, count, update time and protections, then verifies removal and preservation of other playlists. Never automatically retry an uncertain result. Track-list backups cannot restore original IDs or followers.', {
+    token: z.string().uuid(),
+  }, { destructiveHint: true }, ({ token }) => library().deletePrepared(token));
   return server;
 }
 
@@ -81,6 +91,7 @@ export function closeOnInputEnd(input, server) {
 async function main() {
   const adapter = new DesktopAdapter();
   const server = createServer(new MusicController(adapter), {
+    playlists: new PlaylistController(adapter, { enabled: process.env.NETEASE_ENABLE_PLAYLIST_DELETE === '1', protectedIds: (process.env.NETEASE_PROTECTED_PLAYLIST_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean) }),
     beforeOperation: () => adapter.beginOperation(), afterOperation: () => adapter.endOperation(),
     onShutdown: () => adapter.stop(), onDrained: () => adapter.disconnect(),
   });

@@ -39,29 +39,30 @@ export class Cdp {
     for (const job of this.pending.values()) { clearTimeout(job.timer); job.reject(error); }
     this.pending.clear();
   }
-  send(method, params = {}) {
+  send(method, params = {}, timeoutMs = this.timeoutMs) {
     if (this.socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error('CDP_DISCONNECTED'));
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error('CDP_TIMEOUT: Result unknown; command will not be retried.'));
-      }, this.timeoutMs);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       try { this.socket.send(JSON.stringify({ id, method, params })); }
       catch { clearTimeout(timer); this.pending.delete(id); reject(new Error('CDP_SEND_FAILED')); }
     });
   }
-  async evaluate(fn, args) {
+  async evaluate(fn, args, timeoutMs = this.timeoutMs) {
     const result = await this.send('Runtime.evaluate', {
       expression: `(${fn.toString()})(${JSON.stringify(args.action)},${JSON.stringify(args.args ?? {})})`,
       returnByValue: true,
+      awaitPromise: true,
       userGesture: true,
-    });
+    }, timeoutMs);
     if (result.exceptionDetails) {
       // Expose only our known adapter error code, never a page stack or arbitrary DOM text.
       const description = result.exceptionDetails.exception?.description ?? '';
-      const code = description.match(/\b(?:AMBIGUOUS_CONTROL|CONTROL_NOT_FOUND|UNSUPPORTED_CONTROL_LAYOUT|TRACK_CHANGED|UNKNOWN_LIKE_STATE|UNKNOWN_PLAYBACK_STATE|SEARCH_PENDING|STALE_SEARCH|AMBIGUOUS_RESULT|INVALID_ARGUMENT|UNKNOWN_ACTION)\b/)?.[0];
+      const code = description.match(/\b(?:UNSUPPORTED_PLAYLIST_CLIENT|PLAYLIST_LOGIN_REQUIRED|INVALID_PLAYLIST_STATE|PLAYLIST_CHANGED|PROTECTED_PLAYLIST|NOT_OWNED_PLAYLIST|AMBIGUOUS_CONTROL|CONTROL_NOT_FOUND|UNSUPPORTED_CONTROL_LAYOUT|TRACK_CHANGED|UNKNOWN_LIKE_STATE|UNKNOWN_PLAYBACK_STATE|SEARCH_PENDING|STALE_SEARCH|AMBIGUOUS_RESULT|INVALID_ARGUMENT|UNKNOWN_ACTION)\b/)?.[0];
       throw new Error(code || 'UI_EVALUATION_FAILED');
     }
     return result.result?.value;

@@ -3,6 +3,7 @@ import { Cdp } from './cdp.mjs';
 import { inspectDom } from './dom.mjs';
 import { inspectWindows } from './windows.mjs';
 import { ControllerLease } from './lease.mjs';
+import { playlistBridge } from './playlist-bridge.mjs';
 
 export class DesktopAdapter {
   constructor({ executable = process.env.NETEASE_MUSIC_PATH, port = Number(process.env.NETEASE_MCP_PORT ?? 9229) } = {}) {
@@ -96,6 +97,11 @@ export class DesktopAdapter {
     };
     await wait('search_tab');
     return wait('search_results');
+  }
+  async playlistRun(action, args = {}) {
+    await this.connect();
+    this.assertOpen();
+    return this.cdp.evaluate(playlistBridge, { action, args }, 20000);
   }
   async disconnect() {
     this.stop();

@@ -2,7 +2,7 @@
 
 ## Scope
 
-`netease-desktop-mcp` is a local stdio server that controls a Windows music client through its debug interface. It is intended for trusted controllers on the same computer, with one operation active at a time. Version 0.1.0-alpha.2 remains an early development release.
+`netease-desktop-mcp` is a local stdio server that controls a Windows music client through its debug interface. It is intended for trusted controllers on the same computer, with one operation active at a time. Version 0.1.0-alpha.3 remains an early development release.
 
 The debug interface is a control capability, not a public API. Keep it bound to a loopback address. Do not expose it to a LAN, the internet, a reverse proxy, or an untrusted remote MCP client.
 
@@ -21,6 +21,14 @@ The debug interface is a control capability, not a public API. Keep it bound to 
 These are the project's intended implementation and contribution boundaries. Compatibility with a particular client version must be verified separately; a successful unit test run does not establish that boundary by itself.
 
 `trackKey` is a hash of the currently visible track label, not a NetEase song ID. The verified layout supplies separate visible title and artist fields, which are combined into the label. Different recordings can still share that label, and information absent from the UI cannot be inferred. This check detects changes in visible text; it does not establish a unique recording identity. Playback verification also relies on visible labels and UI state.
+
+## Playlist deletion boundaries
+
+Deletion is off unless NETEASE_ENABLE_PLAYLIST_DELETE=1. System liked playlists, collected playlists, unowned entries and NETEASE_PROTECTED_PLAYLIST_IDS are refused in both controller and page checks. A preview binds account, ID, name, track count and update time. Tokens expire after two minutes and are consumed before dispatch. Failed or uncertain writes block new previews for that ID within the current process; this block is not persisted across restarts. Never infer permission to retry from a restart.
+
+The page bridge uses a fixed own-playlist action and never accepts arbitrary dispatch types or collection-unsubscribe parameters. It requires the tested app bundle identifier and expected React store structure. A matching bundle filename is a compatibility check, not cryptographic authenticity. No native input or focus is used for playlist tools. Account identity is read internally only to bind operations and is omitted from tool results. Passwords, cookies and session storage are not read.
+
+Success requires a refreshed list without the target and matching retained playlist IDs, names, track counts and update times. This is metadata verification, not a per-track integrity audit. Client refresh failure or concurrent manual changes can prevent reliable verification. There is no transaction spanning the controller and remote service. A track-list backup cannot restore playlist IDs or followers. MCP annotations are hints; runtime checks enforce the restrictions. User authorization must be obtained by the trusted controller before execution.
 
 ## Verification scope
 
