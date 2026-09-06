@@ -1,0 +1,10 @@
+node_modules/
+work/
+.npm-cache/
+.env
+.env.*
+!.env.example
+*.log
+*.zip
+.netease-mcp/
+coverage/

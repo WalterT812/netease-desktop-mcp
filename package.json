@@ -1,0 +1,37 @@
+{
+  "name": "netease-desktop-mcp",
+  "version": "0.1.0-alpha.1",
+  "description": "Local, verified Windows NetEase Cloud Music control over MCP and CDP",
+  "type": "module",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/WalterT812/netease-desktop-mcp.git" },
+  "bugs": { "url": "https://github.com/WalterT812/netease-desktop-mcp/issues" },
+  "keywords": ["mcp", "netease", "cloudmusic", "windows", "cdp"],
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "netease-desktop-mcp": "src/server.mjs"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check src/server.mjs"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "SECURITY.md"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "linkedom": "0.18.12",
+    "ws": "8.21.3"
+  }
+}
