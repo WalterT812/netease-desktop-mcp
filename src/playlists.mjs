@@ -1,15 +1,34 @@
 import { randomUUID } from 'node:crypto';
 
 export class PlaylistController {
-  constructor(adapter, { enabled = false, protectedIds = [], ttlMs = 120000 } = {}) {
+  constructor(adapter, { enabled = false, createEnabled = false, protectedIds = [], ttlMs = 120000 } = {}) {
     this.adapter = adapter;
     this.enabled = enabled;
+    this.createEnabled = createEnabled;
+    this.uncertainCreates = new Set();
     this.protectedIds = new Set(protectedIds);
     this.ttlMs = ttlMs;
     this.tokens = new Map();
     this.uncertain = new Set();
   }
   async snapshot() { return this.adapter.playlistRun('refresh'); }
+  async create(name, isPrivate = true) {
+    if (!this.createEnabled) throw new Error('PLAYLIST_CREATE_DISABLED');
+    if (typeof name !== 'string' || !name.trim() || name !== name.trim() || name.length > 40 || typeof isPrivate !== 'boolean') throw new Error('INVALID_ARGUMENT');
+    if (this.uncertainCreates.has(name)) throw new Error('CREATE_OUTCOME_UNKNOWN');
+    const before = await this.snapshot();
+    if (before.created.some(p => p.title === name)) throw new Error('PLAYLIST_NAME_EXISTS');
+    this.uncertainCreates.add(name);
+    const result = await this.adapter.playlistRun('create', { name, isPrivate, accountId: before.accountId });
+    const after = await this.snapshot();
+    const added = after.created.filter(p => !before.created.some(old => old.id === p.id));
+    const playlist = added[0];
+    if (before.accountId !== after.accountId || added.length !== 1 || playlist.id !== result.id || playlist.title !== name || !playlist.owned || playlist.system || playlist.trackCount !== 0 || playlist.privacy !== (isPrivate ? 10 : 0)) throw new Error('CREATE_NOT_VERIFIED');
+    const stable = entries => JSON.stringify(entries.map(p => [p.id, p.title, p.trackCount, p.updateTime, p.privacy]).sort((a, b) => a[0].localeCompare(b[0])));
+    if (stable(before.created) !== stable(after.created.filter(p => p.id !== playlist.id)) || stable(before.collected) !== stable(after.collected) || stable([before.system]) !== stable([after.system])) throw new Error('PRESERVATION_CHECK_FAILED');
+    this.uncertainCreates.delete(name);
+    return { verified: true, playlist, remainingCreated: after.created.length };
+  }
   async list() {
     const { accountId, ...result } = await this.snapshot();
     return { ...result, created: result.created.map(p => ({ ...p, protected: this.protectedIds.has(p.id) })), deletionEnabled: this.enabled };

@@ -13,7 +13,7 @@ export function createServer(controller, {
   onShutdown = () => {}, onDrained = async () => {},
   playlists,
 } = {}) {
-  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.3' });
+  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.4' });
   let queue = Promise.resolve();
   let stopped = false;
   let shutdownPromise;
@@ -68,6 +68,9 @@ export function createServer(controller, {
     liked: z.boolean(), trackKey: z.string().regex(/^[a-f0-9]{24}$/),
   }, { destructiveHint: true, idempotentHint: true }, ({ liked, trackKey }) => controller.setLiked(liked, trackKey));
   const library = () => { if (!playlists) throw new Error('PLAYLIST_CONTROLLER_UNAVAILABLE'); return playlists; };
+  register('netease_create_playlist', 'Create one empty owned playlist after user authorization. Private by default. Requires NETEASE_ENABLE_PLAYLIST_CREATE=1. Refuses an existing exact name; verifies returned ID, ownership, privacy and preservation of other playlists. Never retry an uncertain result automatically.', {
+    name: z.string().trim().min(1).max(40), isPrivate: z.boolean().default(true),
+  }, {}, ({ name, isPrivate }) => library().create(name, isPrivate));
   register('netease_list_playlists', 'Refresh owned, collected and system playlists through the desktop client. Does not move the mouse, focus or navigate. Account identifiers are omitted.', {}, { readOnlyHint: true, idempotentHint: true }, () => library().list());
   register('netease_prepare_playlist_delete', 'Preview deletion of an exact owned playlist ID and name; returns a single-use token valid for two minutes. Requires NETEASE_ENABLE_PLAYLIST_DELETE=1. Collected, system and configured protected playlists are refused. Preview is not user consent.', {
     id: z.string().regex(/^\d+$/), expectedName: z.string().min(1).max(500),
@@ -91,7 +94,7 @@ export function closeOnInputEnd(input, server) {
 async function main() {
   const adapter = new DesktopAdapter();
   const server = createServer(new MusicController(adapter), {
-    playlists: new PlaylistController(adapter, { enabled: process.env.NETEASE_ENABLE_PLAYLIST_DELETE === '1', protectedIds: (process.env.NETEASE_PROTECTED_PLAYLIST_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean) }),
+    playlists: new PlaylistController(adapter, { enabled: process.env.NETEASE_ENABLE_PLAYLIST_DELETE === '1', createEnabled: process.env.NETEASE_ENABLE_PLAYLIST_CREATE === '1', protectedIds: (process.env.NETEASE_PROTECTED_PLAYLIST_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean) }),
     beforeOperation: () => adapter.beginOperation(), afterOperation: () => adapter.endOperation(),
     onShutdown: () => adapter.stop(), onDrained: () => adapter.disconnect(),
   });

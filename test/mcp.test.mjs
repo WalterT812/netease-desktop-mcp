@@ -179,7 +179,7 @@ test('concurrent SDK tool calls serialize entire asynchronous controller operati
   ]);
 });
 
-test('real SDK stdio handshake, nine tools, and structured tool failure', async t => {
+test('real SDK stdio handshake, ten tools, and structured tool failure', async t => {
   const transport = new StdioClientTransport({ command: process.execPath,
     args: [fileURLToPath(new URL('../src/server.mjs', import.meta.url))],
     env: { ...process.env, NETEASE_MUSIC_PATH: '' }, stderr: 'pipe' });
@@ -187,7 +187,7 @@ test('real SDK stdio handshake, nine tools, and structured tool failure', async 
   t.after(() => client.close());
   await client.connect(transport);
   const listed = await client.listTools();
-  assert.equal(listed.tools.length, 9);
+  assert.equal(listed.tools.length, 10);
   assert.equal(listed.tools.find(t => t.name === 'netease_get_status').annotations.readOnlyHint, true);
   const result = await client.callTool({ name: 'netease_get_status', arguments: {} });
   assert.equal(result.isError, true);

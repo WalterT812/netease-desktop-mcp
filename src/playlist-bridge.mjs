@@ -22,7 +22,7 @@ export async function playlistBridge(action, args = {}) {
       if (!/^\d+$/.test(id) || typeof p.name !== 'string' || !Number.isSafeInteger(p.trackCount) || p.trackCount < 0) fail('INVALID_PLAYLIST_STATE');
       return { id, title: p.name, trackCount: p.trackCount, updateTime: p.updateTime ?? null,
         owned: String(p.userId) === accountId && p.subscribed === false,
-        system: id === systemId || p.specialType === 5 };
+        system: id === systemId || p.specialType === 5, privacy: p.privacy ?? null };
     };
     const all = resource.createPlaylist.map(entry), collected = resource.favPlaylist.map(entry);
     const systems = all.filter(p => p.system);
@@ -37,6 +37,14 @@ export async function playlistBridge(action, args = {}) {
     const after = snapshot();
     if (after.accountId !== before.accountId) fail('PLAYLIST_CHANGED');
     return after;
+  }
+  if (action === 'create') {
+    if (typeof args.name !== 'string' || !args.name.trim() || args.name.length > 40 || typeof args.isPrivate !== 'boolean') fail('INVALID_ARGUMENT');
+    if (before.accountId !== args.accountId) fail('PLAYLIST_CHANGED');
+    if (before.created.some(p => p.title === args.name)) fail('PLAYLIST_NAME_EXISTS');
+    const id = await store.dispatch({ type: 'async:hostResource/createPlaylist', payload: { name: args.name, isPrivate: args.isPrivate, noToast: true } });
+    if (!/^\d+$/.test(String(id ?? ''))) fail('CREATE_NOT_VERIFIED');
+    return { id: String(id) };
   }
   if (action !== 'delete') fail('UNKNOWN_ACTION');
   const expected = args.expected;

@@ -10,7 +10,7 @@ function fixture() {
     favPlaylist: [{ ...item(20, 'Collected'), userId: 8, subscribed: true }],
   } };
   const calls = [];
-  const store = { getState: () => state, async dispatch(action) { calls.push(action); } };
+  const store = { getState: () => state, async dispatch(action) { calls.push(action); if (action.type === 'async:hostResource/createPlaylist') return '12'; } };
   const document = { scripts: [{ src: 'orpheus://orpheus/pub/hybrid/app.chunk.d4e863d.js' }], querySelector: () => ({ __reactInternalInstance$fixture: { memoizedProps: { value: { store } } } }) };
   const run = (action, args = {}) => runInNewContext(`(${playlistBridge.toString()})(action,args)`, { document, action, args });
   const expected = { id: '11', title: 'Remove', trackCount: 2, updateTime: 1, accountId: '9' };
@@ -60,4 +60,24 @@ test('page dispatches exactly one fixed own-playlist deletion with its string ID
   const f = fixture();
   await f.run('delete', { expected: f.expected, protectedIds: ['10'], playlistType: 'fav' });
   assert.equal(JSON.stringify(f.calls), JSON.stringify([{ type: 'async:hostResource/deletePlaylist', payload: { id: '11', playlistType: 'user' } }]));
+});
+
+test('page creates only the requested name and privacy for the expected account', async () => {
+  const f = fixture();
+  const result = await f.run('create', { name: 'New', isPrivate: true, accountId: '9' });
+  assert.equal(result.id, '12');
+  assert.equal(JSON.stringify(f.calls), JSON.stringify([{ type: 'async:hostResource/createPlaylist', payload: { name: 'New', isPrivate: true, noToast: true } }]));
+});
+
+test('page refuses duplicate names, account changes and invalid create arguments', async () => {
+  for (const args of [
+    { name: 'Keep', isPrivate: true, accountId: '9' },
+    { name: 'New', isPrivate: true, accountId: '8' },
+    { name: '', isPrivate: true, accountId: '9' },
+    { name: 'New', accountId: '9' },
+  ]) {
+    const f = fixture();
+    await assert.rejects(f.run('create', args), /PLAYLIST_NAME_EXISTS|PLAYLIST_CHANGED|INVALID_ARGUMENT/);
+    assert.equal(f.calls.length, 0);
+  }
 });

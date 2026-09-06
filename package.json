@@ -1,6 +1,6 @@
 {
   "name": "netease-desktop-mcp",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "Local, verified Windows NetEase Cloud Music control over MCP and CDP",
   "type": "module",
   "license": "MIT",

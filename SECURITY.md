@@ -2,7 +2,7 @@
 
 ## Scope
 
-`netease-desktop-mcp` is a local stdio server that controls a Windows music client through its debug interface. It is intended for trusted controllers on the same computer, with one operation active at a time. Version 0.1.0-alpha.3 remains an early development release.
+`netease-desktop-mcp` is a local stdio server that controls a Windows music client through its debug interface. It is intended for trusted controllers on the same computer, with one operation active at a time. Version 0.1.0-alpha.4 remains an early development release.
 
 The debug interface is a control capability, not a public API. Keep it bound to a loopback address. Do not expose it to a LAN, the internet, a reverse proxy, or an untrusted remote MCP client.
 
@@ -21,6 +21,10 @@ The debug interface is a control capability, not a public API. Keep it bound to 
 These are the project's intended implementation and contribution boundaries. Compatibility with a particular client version must be verified separately; a successful unit test run does not establish that boundary by itself.
 
 `trackKey` is a hash of the currently visible track label, not a NetEase song ID. The verified layout supplies separate visible title and artist fields, which are combined into the label. Different recordings can still share that label, and information absent from the UI cannot be inferred. This check detects changes in visible text; it does not establish a unique recording identity. Playback verification also relies on visible labels and UI state.
+
+## Playlist creation boundaries
+
+Creation is disabled unless NETEASE_ENABLE_PLAYLIST_CREATE=1. It creates one empty private playlist by default, refuses an existing exact name, and binds the dispatch to the current account. Success requires the returned ID to identify exactly one new owned empty playlist with the requested privacy, with the earlier library retained. Unknown results are blocked by name in the current process; there is no automatic retry or durable cross-process deduplication. Creating a playlist does not authorize adding any track.
 
 ## Playlist deletion boundaries
 

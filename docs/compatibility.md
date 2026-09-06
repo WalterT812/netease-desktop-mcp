@@ -1,5 +1,9 @@
 # Client compatibility
 
+## 0.1.0-alpha.4 — 2026-09-06
+
+Official SDK stdio acceptance created three user-requested empty private playlists on the same client build. Returned IDs, ownership, privacy=10, zero track counts and retained library metadata were verified. Playlist creation requires an independent environment opt-in and does not add tracks. The suite includes 54 tests.
+
 ## 0.1.0-alpha.3 — 2026-09-06
 
 Same Windows/client version as alpha.2. The official SDK stdio client verified complete library refresh and explicitly authorized owned-playlist deletion without native input, navigation or focus. Retained playlist metadata and the system liked count were checked after each operation. This does not establish per-track integrity or heart-write persistence.

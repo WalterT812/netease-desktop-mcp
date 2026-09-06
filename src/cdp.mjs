@@ -63,7 +63,8 @@ export class Cdp {
       // Expose only our known adapter error code, never a page stack or arbitrary DOM text.
       const description = result.exceptionDetails.exception?.description ?? '';
       const code = description.match(/\b(?:UNSUPPORTED_PLAYLIST_CLIENT|PLAYLIST_LOGIN_REQUIRED|INVALID_PLAYLIST_STATE|PLAYLIST_CHANGED|PROTECTED_PLAYLIST|NOT_OWNED_PLAYLIST|AMBIGUOUS_CONTROL|CONTROL_NOT_FOUND|UNSUPPORTED_CONTROL_LAYOUT|TRACK_CHANGED|UNKNOWN_LIKE_STATE|UNKNOWN_PLAYBACK_STATE|SEARCH_PENDING|STALE_SEARCH|AMBIGUOUS_RESULT|INVALID_ARGUMENT|UNKNOWN_ACTION)\b/)?.[0];
-      throw new Error(code || 'UI_EVALUATION_FAILED');
+      const playlistCode = description.match(/\b(?:PLAYLIST_NAME_EXISTS|CREATE_NOT_VERIFIED)\b/)?.[0];
+      throw new Error(code || playlistCode || 'UI_EVALUATION_FAILED');
     }
     return result.result?.value;
   }
