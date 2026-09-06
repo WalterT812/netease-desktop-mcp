@@ -7,13 +7,15 @@ import { z } from 'zod';
 import { DesktopAdapter } from './adapter.mjs';
 import { MusicController } from './controller.mjs';
 import { PlaylistController } from './playlists.mjs';
+import {PlayerController} from './player.mjs';
+import {registerPlayerResource,PLAYER_URI} from './widget.mjs';
 
 export function createServer(controller, {
   beforeOperation = async () => {}, afterOperation = async () => {},
   onShutdown = () => {}, onDrained = async () => {},
-  playlists,
+  playlists, player,
 } = {}) {
-  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.4' });
+  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.5' });
   let queue = Promise.resolve();
   let stopped = false;
   let shutdownPromise;
@@ -26,11 +28,12 @@ export function createServer(controller, {
     return shutdownPromise;
   };
   server.server.onclose = () => { server.shutdown().catch(() => {}); };
-  const register = (name, description, schema, options, operation) => {
+  const register = (name, description, schema, options, operation, meta={}) => {
     server.registerTool(name, {
       title: name, description, inputSchema: z.object(schema).strict(),
       outputSchema: { result: z.record(z.string(), z.unknown()) },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true, ...options },
+      _meta:{ui:{visibility:['netease_get_player','netease_get_status','netease_set_playback','netease_skip_track','netease_set_liked','netease_list_playlists'].includes(name)?['model','app']:['model']},...meta},
     }, args => {
       const job = queue.then(async () => {
         let acquired = false;
@@ -51,6 +54,10 @@ export function createServer(controller, {
       return job;
     });
   };
+  registerPlayerResource(server);
+  const snapshot=()=>{if(!player)throw Error('PLAYER_UNAVAILABLE');return player.snapshot();};
+  register('netease_get_player','Read current desktop music metadata, catalog ID, cover and lyrics without navigating or changing playback. null means unknown. Use for player refresh.',{},{readOnlyHint:true,idempotentHint:true},snapshot);
+  register('netease_show_player','Open the native NetEase music player card with current track, cover, lyrics, playback controls and a text box that sends a message to this Codex task. Does not change playback.',{},{readOnlyHint:true,idempotentHint:true},snapshot,{ui:{resourceUri:PLAYER_URI,visibility:['model','app']},'openai/outputTemplate':PLAYER_URI});
   register('netease_get_status', 'Read the current visible song label, playback and heart state. null means unknown. trackKey hashes the visible title/artist, not a unique catalog ID; identical labels are indistinguishable.', {}, { readOnlyHint: true, idempotentHint: true }, () => controller.status());
   register('netease_search', 'Search songs in the desktop UI. Changes the visible search page; returns a partial list and a token valid for two minutes in this MCP session. Does not play music.', {
     query: z.string().trim().min(1).max(200), limit: z.number().int().min(1).max(30).default(10),
@@ -93,7 +100,9 @@ export function closeOnInputEnd(input, server) {
 
 async function main() {
   const adapter = new DesktopAdapter();
-  const server = createServer(new MusicController(adapter), {
+  const music=new MusicController(adapter);
+  const server = createServer(music, {
+    player:new PlayerController(adapter,music),
     playlists: new PlaylistController(adapter, { enabled: process.env.NETEASE_ENABLE_PLAYLIST_DELETE === '1', createEnabled: process.env.NETEASE_ENABLE_PLAYLIST_CREATE === '1', protectedIds: (process.env.NETEASE_PROTECTED_PLAYLIST_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean) }),
     beforeOperation: () => adapter.beginOperation(), afterOperation: () => adapter.endOperation(),
     onShutdown: () => adapter.stop(), onDrained: () => adapter.disconnect(),

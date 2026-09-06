@@ -4,6 +4,7 @@ import { inspectDom } from './dom.mjs';
 import { inspectWindows } from './windows.mjs';
 import { ControllerLease } from './lease.mjs';
 import { playlistBridge } from './playlist-bridge.mjs';
+import { playerBridge } from './player-bridge.mjs';
 
 export class DesktopAdapter {
   constructor({ executable = process.env.NETEASE_MUSIC_PATH, port = Number(process.env.NETEASE_MCP_PORT ?? 9229) } = {}) {
@@ -103,6 +104,7 @@ export class DesktopAdapter {
     this.assertOpen();
     return this.cdp.evaluate(playlistBridge, { action, args }, 20000);
   }
+  async playerRead(){await this.connect();this.assertOpen();return this.cdp.evaluate(playerBridge,{action:'read'});}
   async disconnect() {
     this.stop();
     await this.endOperation();

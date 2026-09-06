@@ -95,3 +95,39 @@ test('heart analytics on an unrelated button cannot supply like state', () => {
   document.getElementById('modern-heart').setAttribute('data-log', '{"oid":"unrelated","params":{"type":"1"}}');
   assert.equal(inspectDom('status').liked, null);
 });
+
+test('modern red heart is recognized and already-liked requests do not click', () => {
+  modernFixture();
+  const heart = document.getElementById('modern-heart');
+  heart.setAttribute('data-log', '{"oid":"btn_pc_like","params":{"type":"0"}}');
+  heart.innerHTML = '<span aria-label="likenumber_red" title="取消喜欢（Ctrl + L）"></span>';
+  let clicks = 0;
+  heart.click = () => { clicks++; };
+  assert.equal(inspectDom('status').liked, true);
+  inspectDom('like', { trackLabel: 'Example Song — Example Artist', liked: true });
+  assert.equal(clicks, 0);
+});
+
+test('red heart with conflicting analytics or mixed icons remains unknown', () => {
+  modernFixture();
+  const heart = document.getElementById('modern-heart');
+  heart.innerHTML = '<span aria-label="likenumber_red"></span>';
+  assert.equal(inspectDom('status').liked, null);
+  heart.insertAdjacentHTML('beforeend', '<span aria-label="like_number"></span>');
+  assert.equal(inspectDom('status').liked, null);
+});
+
+test('identical marquee title copies resolve to one label', () => {
+  modernFixture();
+  document.querySelector('.title').insertAdjacentHTML('afterend', '<span class="title">Example Song</span>');
+  assert.equal(inspectDom('status').trackLabel, 'Example Song — Example Artist');
+});
+
+test('differing title copies still refuse a mutation', () => {
+  modernFixture();
+  document.querySelector('.title').insertAdjacentHTML('afterend', '<span class="title">Another Song</span>');
+  let clicks = 0;
+  document.getElementById('modern-heart').click = () => { clicks++; };
+  assert.throws(() => inspectDom('like', { trackLabel: 'Example Song — Example Artist', liked: true }), /AMBIGUOUS_CONTROL/);
+  assert.equal(clicks, 0);
+});

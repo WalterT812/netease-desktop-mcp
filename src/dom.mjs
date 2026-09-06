@@ -29,7 +29,10 @@ export function inspectDom(action, args = {}) {
   };
   const song = () => {
     const info = one('[class*="songPlayInfo_"]');
-    const title = text(one('.title', info));
+    // The marquee renders identical copies; differing labels remain ambiguous.
+    const titles = [...new Set(all('.title', info).map(text))];
+    if (titles.length !== 1 || !titles[0]) throw new Error(titles.length > 1 ? 'AMBIGUOUS_CONTROL' : 'CONTROL_NOT_FOUND');
+    const title = titles[0];
     const artists = text(info.querySelector('.author'));
     return { title, artists: artists || null, trackLabel: artists ? `${title} — ${artists}` : title };
   };
@@ -41,6 +44,10 @@ export function inspectDom(action, args = {}) {
     if (pressed === 'true') return true;
     if (pressed === 'false') return false;
     const log = analytics(button);
+    if (log.oid === 'btn_pc_like' && button.querySelector('[aria-label="likenumber_red"]')) {
+      if (button.querySelector('[aria-label="like_number"]')) return null;
+      return log.params?.type === '0' ? true : null;
+    }
     if (log.oid === 'btn_pc_like' && button.querySelector('[aria-label="like_number"]')) {
       // The documented analytics field describes the available action: 1=like, 0=unlike.
       if (log.params?.type === '1') return false;

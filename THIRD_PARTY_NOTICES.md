@@ -35,3 +35,7 @@ SOFTWARE.
 本项目使用官方 [Model Context Protocol TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)（`@modelcontextprotocol/sdk`）和 [Zod](https://github.com/colinhacks/zod)。各依赖及其传递依赖适用各自随包提供的许可证；准确版本由 `package-lock.json` 固定。
 
 网易云音乐、NetEase Cloud Music 及相关商标属于各自权利人。本项目不分发网易云客户端或音乐内容。
+
+## MCP Apps protocol reference
+
+原生卡片的 JSON-RPC 初始化、工具调用及消息接口依据 OpenAI 官方 [vanilla quickstart](https://developers.openai.com/plugins/build/app-quickstart) 与 [MCP server guide](https://developers.openai.com/plugins/build/mcp-server) 编写。界面样式及网易云适配为本项目实现；未打包官方宿主代码。
