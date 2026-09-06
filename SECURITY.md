@@ -2,7 +2,7 @@
 
 ## Scope
 
-`netease-desktop-mcp` is a local stdio server that controls a Windows music client through its debug interface. It is intended for trusted controllers on the same computer, with one operation active at a time. Version 0.1.0-alpha.8 remains an early development release.
+`netease-desktop-mcp` is a local stdio server that controls a Windows music client through its debug interface. It is intended for trusted controllers on the same computer, with one operation active at a time. Version 0.1.0-alpha.9 remains an early development release.
 
 The debug interface is a control capability, not a public API. Keep it bound to a loopback address. Do not expose it to a LAN, the internet, a reverse proxy, or an untrusted remote MCP client.
 
@@ -29,6 +29,12 @@ Search uses a fixed cached client API module with client caches disabled, correl
 Adding tracks requires NETEASE_ENABLE_PLAYLIST_ADD=1 and explicit user authorization. The bridge checks exact string IDs, full playlist name, current account ownership, system/collected/protected status and complete original members. Only missing selected IDs are sent, in at most one add request. Success requires an uncached client API readback whose complete member set exactly matches original members plus selected tracks, with ownership, name and privacy retained. This is client API evidence, not an independent network audit or a transaction excluding other devices.
 
 An uncertain add retains the bound request in the current process. A repeated identical request can only read back; it never resends the mutation. Other requests for that playlist remain blocked. This record is not durable across process restarts; neither restarting nor losing a response authorizes another write. Native requests already sent may continue after a transport timeout. Read actual membership before considering any later action. Search-result playback also consumes its token before dispatch, checks exact metadata and leaves the existing queue intact; it must not automatically retry.
+
+## Playlist playback boundaries
+
+Playlist playback requires user authorization to replace the current queue and start its first song in sequential mode. The fixed bridge reads fresh complete playlist members, resolves exact song IDs, rechecks order/account/metadata, and dispatches at most one mode change and one playback action. Only ordinary music modes and 1–200 tracks are supported; listen-together, FM, AI and ambiguous mixed queues are refused before dispatch. Existing protected-playlist membership remains untouched; a membership protection rule does not prohibit authorized playback.
+
+Success requires the complete actual queue in display order to exactly match playlist members, the first exact ID to be playing, sequential mode and unchanged raw volume. Missing or substituted tracks, changed members or unknown responses cannot silently pass. The controller blocks another playlist-play dispatch after an uncertain outcome in the same process; read the queue and do not restart to bypass this state. This is observed client state, not a lock against subsequent changes, an audible-output test or a promise that future tracks will remain available. alpha.9 live acceptance replaced a 102-track queue with an authorized 15-track playlist, verified its first song playing and all queue IDs in order, and independently re-read membership and unchanged volume without desktop input.
 
 ## Playlist creation boundaries
 

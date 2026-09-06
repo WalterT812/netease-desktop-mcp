@@ -3,7 +3,7 @@
 export async function catalogBridge(action, args = {}) {
   const fail = code => { throw new Error(code); };
   const validId = id => typeof id === 'string' && /^[1-9]\d{0,19}$/.test(id);
-  if (!['search', 'playlist_tracks', 'add_tracks', 'play_result'].includes(action)) fail('UNKNOWN_ACTION');
+  if (!['search', 'playlist_tracks', 'add_tracks', 'play_result', 'queue', 'play_playlist'].includes(action)) fail('UNKNOWN_ACTION');
   if (!Array.from(document.scripts).some(s => /\/app\.chunk\.d4e863d\.js(?:$|\?)/.test(s.src))) fail('UNSUPPORTED_CATALOG_CLIENT');
   const node = document.querySelector('[data-testid="tid_createplaylist_section"]');
   let fiber = node?.[Object.keys(node ?? {}).find(k => k.startsWith('__reactInternalInstance') || k.startsWith('__reactFiber'))];
@@ -21,6 +21,16 @@ export async function catalogBridge(action, args = {}) {
   };
   const accountId = account();
   const unchanged = () => { if (account() !== accountId) fail('PLAYLIST_CHANGED'); };
+  const queueSnapshot = () => {
+    const state = store.getState(), p = state.playing, list = state.playingList?.curPlayingList;
+    if (!p || !Array.isArray(list) || list.length > 10000) fail('INVALID_QUEUE_STATE');
+    const ordered = list.map(t => ({ id: String(t.resourceId ?? ''), trackId: String(t.trackId ?? ''), catalogId: String(t.track?.id ?? ''), order: t.displayOrder, type: t.resourceType })).sort((a, b) => a.order - b.order);
+    if (ordered.some((t, i) => !validId(t.id) || t.id !== t.trackId || t.id !== t.catalogId || t.type !== 'track' || t.order !== i) || new Set(ordered.map(t => t.id)).size !== ordered.length) fail('INVALID_QUEUE_STATE');
+    const volume = p.playingVolume;
+    if (typeof volume !== 'number' || !Number.isFinite(volume) || volume < 0 || volume > 1) fail('INVALID_QUEUE_STATE');
+    return { trackIds: ordered.map(t => t.id), trackCount: ordered.length, trackId: String(p.onlineResourceId ?? ''), currentQueueId: String(p.curPlaying?.resourceId ?? ''), playing: p.playingState === 2, mode: p.playingMode, volume, volumePercent: Math.round(volume * 100), title: typeof p.resourceName === 'string' ? p.resourceName : null, source: 'desktop_queue_store' };
+  };
+  if (action === 'queue') return queueSnapshot();
   // Webpack 4 provides no public getter. Capture its loader with a disposable
   // module, use only the already-loaded fixed module, then remove our own entry.
   const chunks = window.webpackJsonp;
@@ -92,6 +102,56 @@ export async function catalogBridge(action, args = {}) {
   };
   const before = await readPlaylist();
   if (action === 'playlist_tracks') return before;
+  if (action === 'play_playlist') {
+    if (typeof args.expectedName !== 'string' || typeof args.expectedVolume !== 'number') fail('INVALID_ARGUMENT');
+    if (before.title !== args.expectedName) fail('PLAYLIST_CHANGED');
+    if (!before.trackCount || before.trackCount > 200) fail('PLAYLIST_PLAY_UNSUPPORTED');
+    const state = store.getState();
+    if (state['async:listenTogether']?.status !== 'alone' || !['playOrder', 'playCycle', 'playOneCycle', 'playRandom'].includes(state.playing?.playingMode)) fail('PLAYLIST_PLAY_UNSUPPORTED');
+    const { values, mapped } = await songsById(before.trackIds);
+    const tracks = before.trackIds.map(id => values.find(t => String(t.id) === id));
+    const latest = await readPlaylist();
+    const sameOrder = (a, b) => a.length === b.length && a.every((id, i) => id === b[i]);
+    if (latest.title !== before.title || latest.owned !== before.owned || latest.privacy !== before.privacy || !sameOrder(latest.trackIds, before.trackIds)) fail('PLAYLIST_CHANGED');
+    const initial = queueSnapshot();
+    if (initial.volume !== args.expectedVolume) fail('PLAYLIST_CHANGED');
+    if (store.getState()['async:listenTogether']?.status !== 'alone' || !['playOrder', 'playCycle', 'playOneCycle', 'playRandom'].includes(initial.mode)) fail('PLAYLIST_PLAY_UNSUPPORTED');
+    unchanged();
+    // Once either fixed action is sent, failures are uncertain. Never replay a
+    // command as part of verification, and never repair volume by writing it.
+    try {
+      if (initial.mode !== 'playOrder') {
+        await store.dispatch({ type: 'playing/switchPlayingMode', payload: { playingMode: 'playOrder', triggerScene: 'playlist' } });
+        unchanged();
+        const modeRead = queueSnapshot();
+        if (modeRead.mode !== 'playOrder' || modeRead.volume !== initial.volume || store.getState()['async:listenTogether']?.status !== 'alone') fail('PLAYLIST_PLAY_OUTCOME_UNKNOWN');
+      }
+      let responseLost = false;
+      try {
+        await store.dispatch({ type: 'playing/play', payload: {
+          tracks, from: { resourceType: 'track', scene: 'playlist', text: before.title, href: '', needOpenVinylPage: false,
+            fromInfo: { originalScene: 'playlist', originalResourceType: 'playlist', computeSourceResourceType: 'track', sourceData: { id: before.id, name: before.title, trackCount: before.trackCount } } },
+          options: { clear: true, play: true, playId: before.trackIds[0] }, triggerScene: 'playlist',
+        } });
+      } catch { responseLost = true; }
+      const matches = s => sameOrder(s.trackIds, before.trackIds) && s.trackId === before.trackIds[0] && s.currentQueueId === before.trackIds[0] && s.playing && s.mode === 'playOrder' && s.volume === initial.volume;
+      let stable = 0;
+      for (let attempt = 0; attempt < 60; attempt++) {
+        unchanged();
+        const snapshot = queueSnapshot();
+        stable = matches(snapshot) ? stable + 1 : 0;
+        if (stable >= 3) {
+          const members = await readPlaylist();
+          if (members.title !== before.title || members.owned !== before.owned || members.privacy !== before.privacy || !sameOrder(members.trackIds, before.trackIds)) fail('PLAYLIST_PLAY_OUTCOME_UNKNOWN');
+          const final = queueSnapshot();
+          if (!matches(final)) fail('PLAYLIST_PLAY_OUTCOME_UNKNOWN');
+          return { verified: true, playlistId: before.id, playlistName: before.title, firstTrack: mapped.find(t => t.id === before.trackIds[0]), ...final, responseLost, volumePreserved: true, verificationSource: 'exact_queue_order_and_playlist_members' };
+        }
+        await new Promise(resolve => setTimeout(resolve, 150));
+      }
+      fail('PLAYLIST_PLAY_OUTCOME_UNKNOWN');
+    } catch { fail('PLAYLIST_PLAY_OUTCOME_UNKNOWN'); }
+  }
   if (!Array.isArray(args.trackIds) || args.trackIds.length < 1 || args.trackIds.length > 50 || args.trackIds.some(id => !validId(id)) || new Set(args.trackIds).size !== args.trackIds.length || !Array.isArray(args.protectedIds)) fail('INVALID_ARGUMENT');
   const requireOwned = p => {
     const resource = store.getState()['async:hostResource'];

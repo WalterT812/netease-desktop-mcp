@@ -4,6 +4,24 @@ export class CatalogController {
     this.addEnabled = addEnabled;
     this.protectedIds = [...protectedIds];
     this.uncertain = new Map();
+    this.playUncertain = false;
+  }
+  async queue(offset = 0, limit = 100) {
+    const value = await this.adapter.catalogRun('queue');
+    return { ...value, trackIds: value.trackIds.slice(offset, offset + limit), offset, limit, complete: offset === 0 && limit >= value.trackCount };
+  }
+  async playPlaylist(playlistId, expectedName) {
+    if (this.playUncertain) throw new Error('PLAYLIST_PLAY_OUTCOME_UNKNOWN: Read netease_get_queue; do not restart or replay automatically.');
+    const before = await this.adapter.catalogRun('queue');
+    this.playUncertain = true;
+    try {
+      const result = await this.adapter.catalogRun('play_playlist', { playlistId, expectedName, expectedVolume: before.volume });
+      this.playUncertain = false;
+      return result;
+    } catch (error) {
+      if (['INVALID_ARGUMENT', 'PLAYLIST_CHANGED', 'PLAYLIST_LOGIN_REQUIRED', 'INCOMPLETE_PLAYLIST_MEMBERS', 'INVALID_CATALOG_RESPONSE', 'TRACK_ID_MISMATCH', 'CATALOG_REQUEST_FAILED', 'UNSUPPORTED_CATALOG_CLIENT', 'INVALID_QUEUE_STATE', 'PLAYLIST_PLAY_UNSUPPORTED'].includes(error.message)) this.playUncertain = false;
+      throw error;
+    }
   }
   async tracks(playlistId, offset = 0, limit = 100) {
     const value = await this.adapter.catalogRun('playlist_tracks', { playlistId });

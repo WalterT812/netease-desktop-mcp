@@ -16,7 +16,7 @@ export function createServer(controller, {
   onShutdown = () => {}, onDrained = async () => {},
   playlists, player, catalog,
 } = {}) {
-  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.8' });
+  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.9' });
   let queue = Promise.resolve();
   let stopped = false;
   let shutdownPromise;
@@ -79,6 +79,12 @@ export function createServer(controller, {
   }, { destructiveHint: true, idempotentHint: true }, ({ liked, trackKey }) => controller.setLiked(liked, trackKey));
   const library = () => { if (!playlists) throw new Error('PLAYLIST_CONTROLLER_UNAVAILABLE'); return playlists; };
   const catalogController = () => { if (!catalog) throw new Error('CATALOG_UNAVAILABLE'); return catalog; };
+  register('netease_get_queue', 'Read the actual desktop playback queue in display order, with current song ID, playing state, mode and volume. Validates complete queue identities before returning a bounded slice. No playback or input changes.', {
+    offset: z.number().int().min(0).max(10000).default(0), limit: z.number().int().min(1).max(1000).default(100),
+  }, { readOnlyHint: true, idempotentHint: true }, ({ offset, limit }) => catalogController().queue(offset, limit));
+  register('netease_play_playlist', 'After user authorization, replace the current queue with exactly this playlist in its current order and start its first song in sequential mode. Preserves volume and playlist membership. Requires exact playlist ID and full name, 1-200 tracks, ordinary music mode and no listen-together session. Verifies complete actual queue IDs and order, first playing ID, mode and unchanged volume. No mouse, keyboard or focus. On any uncertain outcome read netease_get_queue; never automatically restart or replay.', {
+    playlistId: z.string().regex(/^[1-9]\d{0,19}$/), expectedName: z.string().min(1).max(500),
+  }, { destructiveHint: true }, ({ playlistId, expectedName }) => catalogController().playPlaylist(playlistId, expectedName));
   register('netease_get_playlist_tracks', 'Read exact playlist member IDs from an uncached client API response. Verifies the full member count before returning a bounded slice. Does not navigate or alter playback.', {
     playlistId: z.string().regex(/^[1-9]\d{0,19}$/), offset: z.number().int().min(0).max(100000).default(0), limit: z.number().int().min(1).max(1000).default(100),
   }, { readOnlyHint: true, idempotentHint: true }, ({ playlistId, offset, limit }) => catalogController().tracks(playlistId, offset, limit));

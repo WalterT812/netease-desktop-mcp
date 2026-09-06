@@ -24,10 +24,115 @@ function fixture() {
   chunks.push = function (payload) { Array.prototype.push.call(this, payload); const [id, fn] = Object.entries(payload[1])[0]; loader.m[id] = fn; loader.c[id] = {}; fn({}, {}, loader); };
   const store = { getState: () => state, async dispatch(p) { calls.push({ method: 'dispatch', p }); } };
   const document = { scripts: [{ src: 'orpheus://orpheus/pub/hybrid/app.chunk.d4e863d.js' }], querySelector: () => ({ __reactInternalInstance$test: { memoizedProps: { value: { store } } } }) };
-  const run = (action, args = {}) => runInNewContext(`(${catalogBridge.toString()})(action,args)`, { document, window: { webpackJsonp: chunks }, action, args });
+  const run = (action, args = {}) => runInNewContext(`(${catalogBridge.toString()})(action,args)`, { document, window: { webpackJsonp: chunks }, action, args, setTimeout: fn => setTimeout(fn, 1) });
   const add = { playlistId: '10', expectedName: 'Target', trackIds: ['5', '7'], protectedIds: [] };
-  return { state, playlist, api, calls, loader, chunks, document, run, add };
+  return { state, playlist, api, calls, loader, chunks, document, run, add, store };
 }
+
+function playFixture() {
+  const f = fixture();
+  f.state.playing = { playingVolume: 0.43, playingMode: 'playRandom', playingState: 2, onlineResourceId: '99', curPlaying: { resourceId: '99' }, resourceName: 'Old' };
+  const entry = (id, displayOrder) => ({ resourceId: id, trackId: id, track: { id }, displayOrder, resourceType: 'track' });
+  f.state.playingList = { curPlayingList: [entry('99', 0)] };
+  f.state['async:listenTogether'] = { status: 'alone' };
+  f.playlist.trackIds = [{ id: '7' }, { id: '5' }]; f.playlist.trackCount = 2;
+  f.store.dispatch = async p => {
+    f.calls.push({ method: 'dispatch', p });
+    if (p.type === 'playing/switchPlayingMode') f.state.playing.playingMode = p.payload.playingMode;
+    if (p.type === 'playing/play') {
+      f.state.playingList.curPlayingList = p.payload.tracks.map((t, i) => entry(String(t.id), i));
+      Object.assign(f.state.playing, { onlineResourceId: p.payload.options.playId, curPlaying: { resourceId: p.payload.options.playId }, resourceName: 'First song', playingState: 2 });
+    }
+  };
+  f.play = { playlistId: '10', expectedName: 'Target', expectedVolume: 0.43 };
+  return f;
+}
+
+test('playlist playback replaces the queue in fresh member order and preserves raw volume', async () => {
+  const f = playFixture(), original = f.api.Oh;
+  f.api.Oh = async (p, o) => (await original(p, o)).reverse();
+  const result = await f.run('play_playlist', f.play);
+  assert.equal(result.verified, true); assert.deepEqual(json(result.trackIds), ['7', '5']);
+  assert.equal(result.trackId, '7'); assert.equal(result.currentQueueId, '7');
+  assert.equal(result.volume, 0.43); assert.equal(result.mode, 'playOrder'); assert.equal(result.playing, true);
+  const writes = f.calls.filter(c => c.method === 'dispatch').map(c => c.p);
+  assert.deepEqual(writes.map(p => p.type), ['playing/switchPlayingMode', 'playing/play']);
+  assert.deepEqual(json(writes[1].payload.options), { clear: true, play: true, playId: '7' });
+  assert.equal(writes[1].payload.from.needOpenVinylPage, false);
+  assert.equal(writes[1].payload.from.fromInfo.sourceData.id, '10');
+  assert.equal(f.calls.some(c => c.method === 'zh'), false);
+});
+
+test('queue reads sort display order and reject ambiguous, local or duplicate identities', async () => {
+  const f = playFixture();
+  f.state.playingList.curPlayingList.push({ resourceId: '98', trackId: '98', track: { id: '98' }, displayOrder: 1, resourceType: 'track' });
+  f.state.playingList.curPlayingList.reverse();
+  assert.deepEqual(json((await f.run('queue')).trackIds), ['99', '98']);
+  assert.equal(f.calls.length, 0);
+  for (const change of [t => t.displayOrder = 0, t => t.track.id = '12', t => t.resourceType = 'voice']) {
+    const g = playFixture(); change(g.state.playingList.curPlayingList[0]);
+    if (g.state.playingList.curPlayingList[0].displayOrder === 0 && g.state.playingList.curPlayingList[0].track.id === '99' && g.state.playingList.curPlayingList[0].resourceType === 'track') g.state.playingList.curPlayingList.push(structuredClone(g.state.playingList.curPlayingList[0]));
+    await assert.rejects(g.run('queue'), /INVALID_QUEUE_STATE/);
+  }
+});
+
+test('playlist preflight rejects empty, oversized, renamed, together and nonstandard modes before writes', async () => {
+  for (const change of [
+    f => { f.playlist.trackIds = []; f.playlist.trackCount = 0; },
+    f => { f.playlist.trackIds = Array.from({length:201}, (_,i) => ({id:String(i+1)})); f.playlist.trackCount = 201; },
+    f => f.playlist.name = 'Changed',
+    f => f.state['async:listenTogether'].status = 'together',
+    f => f.state.playing.playingMode = 'playAi',
+    f => f.play.expectedVolume = 0.2,
+  ]) {
+    const f = playFixture(); change(f);
+    await assert.rejects(f.run('play_playlist', f.play), /PLAYLIST_PLAY_UNSUPPORTED|PLAYLIST_CHANGED/);
+    assert.equal(f.calls.some(c => c.method === 'dispatch'), false);
+  }
+});
+
+test('playlist membership order or account changes during preflight prevent playback', async () => {
+  for (const change of [f => f.playlist.trackIds.reverse(), f => f.state.host.uid = 11]) {
+    const f = playFixture(), original = f.api.Oh;
+    f.api.Oh = async (p,o) => { const r=await original(p,o); change(f); return r; };
+    await assert.rejects(f.run('play_playlist', f.play), /PLAYLIST_CHANGED/);
+    assert.equal(f.calls.some(c => c.method === 'dispatch'), false);
+  }
+});
+
+test('missing or reordered queue, wrong current ID, paused state or volume change cannot pass playback verification', async () => {
+  for (const change of [
+    f => f.state.playingList.curPlayingList.pop(),
+    f => { const a=f.state.playingList.curPlayingList; a[0].displayOrder=1; a[1].displayOrder=0; },
+    f => f.state.playing.onlineResourceId = '99',
+    f => f.state.playing.playingState = 1,
+    f => f.state.playing.playingVolume = 0.44,
+  ]) {
+    const f = playFixture(), original = f.store.dispatch;
+    f.store.dispatch = async p => { await original(p); if(p.type==='playing/play')change(f); };
+    await assert.rejects(f.run('play_playlist', f.play), /PLAYLIST_PLAY_OUTCOME_UNKNOWN/);
+    assert.equal(f.calls.filter(c => c.method === 'dispatch' && c.p.type === 'playing/play').length, 1);
+  }
+});
+
+test('lost play response succeeds only by readback; lost mode response never proceeds to playback', async () => {
+  const f = playFixture(), original = f.store.dispatch;
+  f.store.dispatch = async p => { await original(p); if(p.type==='playing/play')throw Error('lost'); };
+  assert.equal((await f.run('play_playlist', f.play)).responseLost, true);
+  assert.equal(f.calls.filter(c => c.method === 'dispatch' && c.p.type === 'playing/play').length, 1);
+  const g = playFixture(); g.store.dispatch = async p => { g.calls.push({method:'dispatch',p}); throw Error('lost'); };
+  await assert.rejects(g.run('play_playlist', g.play), /PLAYLIST_PLAY_OUTCOME_UNKNOWN/);
+  assert.equal(g.calls.some(c => c.p?.type === 'playing/play'), false);
+});
+
+test('playlist controller blocks replay after timeout and still exposes bounded read-only queue', async () => {
+  const calls=[];
+  const c=new CatalogController({async catalogRun(action,args){calls.push({action,args}); if(action==='queue')return {trackIds:['1','2'],trackCount:2,volume:0.43}; throw Error('CDP_TIMEOUT');}});
+  await assert.rejects(c.playPlaylist('10','Target'), /CDP_TIMEOUT/);
+  await assert.rejects(c.playPlaylist('10','Target'), /PLAYLIST_PLAY_OUTCOME_UNKNOWN/);
+  const page=await c.queue(1,1); assert.deepEqual(page.trackIds,['2']); assert.equal(page.complete,false);
+  assert.equal(calls.filter(c=>c.action==='play_playlist').length,1);
+});
 
 test('background search correlates query and response and removes disposable loader entries', async () => {
   const f = fixture();
