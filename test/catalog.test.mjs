@@ -250,6 +250,22 @@ test('uncertain recovery only reads; it cannot dispatch another add', async () =
   assert.equal((await f.run('add_tracks', { ...f.add, readOnlyRecovery: true })).verified, true);
 });
 
+test('single-song playback supplies the source metadata required by native playback', async () => {
+  const f = fixture(), item = { id: '7', title: 'Song 7', artists: 'Artist', album: 'Album' };
+  f.store.dispatch = async action => {
+    const { originalScene, originalResourceType, computeSourceResourceType, sourceData } = action.payload.from.fromInfo;
+    assert.equal(originalScene, 'search');
+    assert.equal(originalResourceType, 'track');
+    assert.equal(computeSourceResourceType, 'track');
+    assert.equal(sourceData.id, item.id);
+    assert.equal(action.payload.from.needOpenVinylPage, false);
+    assert.equal(action.payload.options.clear, false);
+    f.calls.push({ method: 'dispatch', action });
+  };
+  assert.equal((await f.run('play_result', { item })).dispatched, true);
+  assert.equal(f.calls.filter(c => c.method === 'dispatch').length, 1);
+});
+
 test('background play validates catalog metadata then dispatches one exact track', async () => {
   const f = fixture(), item = { id: '7', title: 'Song 7', artists: 'Artist', album: 'Album' };
   await assert.rejects(f.run('play_result', { item: { ...item, album: 'Different recording' } }), /STALE_SEARCH/);

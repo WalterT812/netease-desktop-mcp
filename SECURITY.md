@@ -2,7 +2,7 @@
 
 ## Scope
 
-`netease-desktop-mcp` is a local stdio server that controls a Windows music client through its debug interface. It is intended for trusted controllers on the same computer, with one operation active at a time. Version 0.1.0-alpha.9 remains an early development release.
+`netease-desktop-mcp` is a local stdio server that controls a Windows music client through its debug interface. It is intended for trusted controllers on the same computer, with one operation active at a time. Version 0.1.0-alpha.10 remains an early development release.
 
 The debug interface is a control capability, not a public API. Keep it bound to a loopback address. Do not expose it to a LAN, the internet, a reverse proxy, or an untrusted remote MCP client.
 
@@ -20,7 +20,7 @@ The debug interface is a control capability, not a public API. Keep it bound to 
 
 These are the project's intended implementation and contribution boundaries. Compatibility with a particular client version must be verified separately; a successful unit test run does not establish that boundary by itself.
 
-`trackKey` is a hash of the currently visible track label, not a NetEase song ID. The verified layout supplies separate visible title and artist fields, which are combined into the label. Different recordings can still share that label, and information absent from the UI cannot be inferred. This check detects changes in visible text; it does not establish a unique recording identity. Like and skip verification retain this limitation. Background catalog playback additionally verifies the selected exact song ID, but its new live playback path has not yet been accepted.
+`trackKey` is a hash of the currently visible track label, not a NetEase song ID. The verified layout supplies separate visible title and artist fields, which are combined into the label. Different recordings can still share that label, and information absent from the UI cannot be inferred. This check detects changes in visible text; it does not establish a unique recording identity. Like and skip verification retain this limitation. Background catalog playback additionally verifies the selected exact song ID; alpha.10 live acceptance confirmed that path after supplying required source metadata.
 
 ## Catalog and playlist member boundaries
 
@@ -49,6 +49,8 @@ The page bridge uses a fixed own-playlist action and never accepts arbitrary dis
 Success requires a refreshed list without the target and matching retained playlist IDs, names, track counts and update times. This is metadata verification, not a per-track integrity audit. Client refresh failure or concurrent manual changes can prevent reliable verification. There is no transaction spanning the controller and remote service. A track-list backup cannot restore playlist IDs or followers. MCP annotations are hints; runtime checks enforce the restrictions. User authorization must be obtained by the trusted controller before execution.
 
 ## Verification scope
+
+alpha.10 passed 95 automated tests, including a regression that failed for missing native source metadata before the fix. A single authorized SDK search-result play then succeeded with the exact selected catalog ID; independent player and queue reads confirmed playing=true. Raw volume, mode, original queue relative order and the separately checked playlist membership were preserved. No automatic replay, native desktop input or app restart was used.
 
 alpha.8 passed 86 automated tests and live SDK stdio checks for background search correlation, exact-ID addition to one authorized private playlist, independent member readback and duplicate prevention. Playback identity, playing state, volume and mode were unchanged by that acceptance. Preserved collections were compared by metadata, not every track. Native Codex MCP also successfully read the added member and a distinct search result. New background search-result playback has synthetic coverage only; it was not live-tested because this acceptance did not authorize changing playback.
 

@@ -83,7 +83,8 @@ export async function catalogBridge(action, args = {}) {
     if (['title', 'artists', 'album'].some(k => mapped[0][k] !== args.item[k])) fail('STALE_SEARCH');
     unchanged();
     await store.dispatch({ type: 'playing/play', payload: {
-      tracks: values, from: { resourceType: 'track', scene: 'search', text: 'MCP search', href: '', needOpenVinylPage: false },
+      tracks: values, from: { resourceType: 'track', scene: 'search', text: 'MCP search', href: '', needOpenVinylPage: false,
+        fromInfo: { originalScene: 'search', originalResourceType: 'track', computeSourceResourceType: 'track', sourceData: { id: args.item.id, name: args.item.title } } },
       options: { clear: false, play: true, playId: args.item.id }, triggerScene: 'search',
     } });
     return { dispatched: true, trackId: args.item.id };
