@@ -105,6 +105,7 @@ export class DesktopAdapter {
     return this.cdp.evaluate(playlistBridge, { action, args }, 20000);
   }
   async playerRead(){await this.connect();this.assertOpen();return this.cdp.evaluate(playerBridge,{action:'read'});}
+  async playerControl(action,args){await this.connect();this.assertOpen();return this.cdp.evaluate(playerBridge,{action,args});}
   async disconnect() {
     this.stop();
     await this.endOperation();

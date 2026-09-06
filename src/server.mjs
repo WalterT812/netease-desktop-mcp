@@ -15,7 +15,7 @@ export function createServer(controller, {
   onShutdown = () => {}, onDrained = async () => {},
   playlists, player,
 } = {}) {
-  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.5' });
+  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.6' });
   let queue = Promise.resolve();
   let stopped = false;
   let shutdownPromise;
@@ -33,7 +33,7 @@ export function createServer(controller, {
       title: name, description, inputSchema: z.object(schema).strict(),
       outputSchema: { result: z.record(z.string(), z.unknown()) },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true, ...options },
-      _meta:{ui:{visibility:['netease_get_player','netease_get_status','netease_set_playback','netease_skip_track','netease_set_liked','netease_list_playlists'].includes(name)?['model','app']:['model']},...meta},
+      _meta:{ui:{visibility:['netease_get_player','netease_get_status','netease_set_playback','netease_skip_track','netease_set_liked','netease_seek','netease_set_volume','netease_list_playlists'].includes(name)?['model','app']:['model']},...meta},
     }, args => {
       const job = queue.then(async () => {
         let acquired = false;
@@ -58,6 +58,8 @@ export function createServer(controller, {
   const snapshot=()=>{if(!player)throw Error('PLAYER_UNAVAILABLE');return player.snapshot();};
   register('netease_get_player','Read current desktop music metadata, catalog ID, cover and lyrics without navigating or changing playback. null means unknown. Use for player refresh.',{},{readOnlyHint:true,idempotentHint:true},snapshot);
   register('netease_show_player','Open the native NetEase music player card with current track, cover, lyrics, playback controls and a text box that sends a message to this Codex task. Does not change playback.',{},{readOnlyHint:true,idempotentHint:true},snapshot,{ui:{resourceUri:PLAYER_URI,visibility:['model','app']},'openai/outputTemplate':PLAYER_URI});
+  register('netease_seek','Seek the current track to seconds and verify the position. Requires exact trackId from a fresh player read; changed tracks or unsupported progress refuse the write.',{trackId:z.string().regex(/^\d+$/),seconds:z.number().finite().min(0)},{idempotentHint:true},args=>player.seek(args.trackId,args.seconds));
+  register('netease_set_volume','Set NetEase application volume from 0 to 100 and verify the client volume. Does not change Windows system volume.',{percent:z.number().finite().min(0).max(100)},{idempotentHint:true},args=>player.volume(args.percent));
   register('netease_get_status', 'Read the current visible song label, playback and heart state. null means unknown. trackKey hashes the visible title/artist, not a unique catalog ID; identical labels are indistinguishable.', {}, { readOnlyHint: true, idempotentHint: true }, () => controller.status());
   register('netease_search', 'Search songs in the desktop UI. Changes the visible search page; returns a partial list and a token valid for two minutes in this MCP session. Does not play music.', {
     query: z.string().trim().min(1).max(200), limit: z.number().int().min(1).max(30).default(10),
