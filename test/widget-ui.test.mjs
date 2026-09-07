@@ -15,6 +15,14 @@ async function fixture({message=true}={}){
 test('card renders safe text and disables follow-up when host does not advertise messages',async()=>{
  const f=await fixture({message:false});assert.equal(f.document.getElementById('title').textContent,f.song.title);assert.equal(f.document.getElementById('cover').hasAttribute('src'),false);assert.equal(f.document.getElementById('send').disabled,true);assert.match(f.document.getElementById('lyrics').textContent,/暂无歌词/);
 });
+
+test('card highlights the current lyric with safe translation and rejects another song lyrics',async()=>{
+ const f=await fixture();const update=value=>f.emit({method:'ui/notifications/tool-result',params:{structuredContent:{result:{...f.song,...value}}}});
+ update({lyrics:['Before','Current <img src=x>','After'],lyricLine:1,lyricTrackId:'123',timedLyrics:[{}, {translation:'译文 <script>not code</script>'},{}]});
+ const box=f.document.getElementById('lyrics');assert.equal(box.querySelector('.current').textContent,'Current <img src=x>');assert.equal(box.querySelector('.translation').textContent,'译文 <script>not code</script>');assert.equal(box.querySelector('script,img'),null);
+ update({lyrics:['Before'],lyricLine:-1,lyricTrackId:'123'});assert.equal(box.querySelector('.current'),null);
+ update({lyrics:['Wrong song'],lyricLine:0,lyricTrackId:'999'});assert.doesNotMatch(box.textContent,/Wrong song/);assert.match(box.textContent,/无法读取/);
+});
 test('follow-up submits once with the clicked song identity and preserves newer input',async()=>{
  const f=await fixture(),input=f.document.getElementById('message'),form=f.document.getElementById('message-form');input.value='请推荐类似的音乐';form.onsubmit({preventDefault(){}});form.onsubmit({preventDefault(){}});
  const messages=f.sent.filter(m=>m.method==='ui/message');assert.equal(messages.length,1);assert.equal(messages[0].params.role,'user');assert.match(messages[0].params.content[0].text,/"trackId":"123"/);

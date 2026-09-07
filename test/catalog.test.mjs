@@ -134,6 +134,24 @@ test('playlist controller blocks replay after timeout and still exposes bounded 
   assert.equal(calls.filter(c=>c.action==='play_playlist').length,1);
 });
 
+test('lyrics use the fixed current-song API and project timed text without contributor data', async () => {
+  const f=fixture();f.state.playing.onlineResourceId='7';
+  f.api.xg=async(p,o)=>{f.calls.push({p,o});return {code:200};};
+  f.loader.c[373]={exports:{a:()=>({displayType:'default',lyricContributor:{secret:'private'},lyricLines:[{time:1,lyric:'Text'}],tlyricLines:[{time:1,lyric:'译文'}]})}};
+  const result=await f.run('lyrics',{trackId:'7'});
+  assert.deepEqual(json(result.timedLyrics),[{timeSeconds:1,text:'Text',translation:'译文'}]);assert.equal(result.lyricStatus,'available');
+  assert.equal(f.calls[0].p.id,'7');assert.equal(f.calls[0].o.cacheStrategy.enable,false);assert.doesNotMatch(JSON.stringify(result),/private|Contributor/);
+  await assert.rejects(f.run('lyrics',{trackId:'8'}),/TRACK_CHANGED/);assert.equal(f.calls.length,1);
+});
+
+test('lyrics refuse a changed song or malformed response and preserve pure-music state',async()=>{
+ const f=fixture();f.state.playing.onlineResourceId='7';f.api.xg=async()=>({code:200});
+ f.loader.c[373]={exports:{a:()=>({displayType:'pure',lyricLines:[],tlyricLines:[]})}};
+ assert.equal((await f.run('lyrics',{trackId:'7'})).lyricStatus,'instrumental');
+ f.loader.c[373].exports.a=()=>({lyricLines:[{time:NaN,lyric:'Bad'}]});await assert.rejects(f.run('lyrics',{trackId:'7'}),/INVALID_CATALOG_RESPONSE/);
+ f.api.xg=async()=>{f.state.playing.onlineResourceId='8';return {code:200};};await assert.rejects(f.run('lyrics',{trackId:'7'}),/TRACK_CHANGED/);
+});
+
 test('background search correlates query and response and removes disposable loader entries', async () => {
   const f = fixture();
   const first = await f.run('search', { query: 'First', limit: 10 });

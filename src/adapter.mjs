@@ -94,6 +94,7 @@ export class DesktopAdapter {
     return this.cdp.evaluate(playlistBridge, { action, args }, 20000);
   }
   async playerRead(){await this.connect();this.assertOpen();return this.cdp.evaluate(playerBridge,{action:'read'});}
+  async lyricsRead(trackId){await this.connect();this.assertOpen();return this.cdp.evaluate(catalogBridge,{action:'lyrics',args:{trackId}},10000);}
   async playerControl(action,args){await this.connect();this.assertOpen();return this.cdp.evaluate(playerBridge,{action,args});}
   async disconnect() {
     this.stop();

@@ -3,7 +3,7 @@
 export async function catalogBridge(action, args = {}) {
   const fail = code => { throw new Error(code); };
   const validId = id => typeof id === 'string' && /^[1-9]\d{0,19}$/.test(id);
-  if (!['search', 'playlist_tracks', 'add_tracks', 'play_result', 'queue', 'play_playlist'].includes(action)) fail('UNKNOWN_ACTION');
+  if (!['search', 'playlist_tracks', 'add_tracks', 'play_result', 'queue', 'play_playlist', 'lyrics'].includes(action)) fail('UNKNOWN_ACTION');
   if (!Array.from(document.scripts).some(s => /\/app\.chunk\.d4e863d\.js(?:$|\?)/.test(s.src))) fail('UNSUPPORTED_CATALOG_CLIENT');
   const node = document.querySelector('[data-testid="tid_createplaylist_section"]');
   let fiber = node?.[Object.keys(node ?? {}).find(k => k.startsWith('__reactInternalInstance') || k.startsWith('__reactFiber'))];
@@ -36,11 +36,12 @@ export async function catalogBridge(action, args = {}) {
   const chunks = window.webpackJsonp;
   if (!Array.isArray(chunks)) fail('UNSUPPORTED_CATALOG_CLIENT');
   const key = `netease_mcp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  let loader, api;
+  let loader, api, formatLyrics;
   const payload = [[], { [key]: (module, exports, require) => { loader = require; } }, [[key]]];
   try {
     chunks.push(payload);
     api = loader?.c?.[14]?.exports;
+    if (action === 'lyrics') formatLyrics = loader?.c?.[373]?.exports?.a;
     if (!api || ['V', 'Rh', 'Oh', 'zh'].some(k => typeof api[k] !== 'function')) fail('UNSUPPORTED_CATALOG_CLIENT');
   } finally {
     if (loader?.m) delete loader.m[key];
@@ -53,6 +54,23 @@ export async function catalogBridge(action, args = {}) {
     try { return await api[method](parameters, noCache()); }
     catch { fail('CATALOG_REQUEST_FAILED'); }
   };
+  if (action === 'lyrics') {
+    if (!validId(args.trackId)) fail('INVALID_ARGUMENT');
+    const sameTrack = () => { unchanged(); if (String(store.getState().playing?.onlineResourceId) !== args.trackId) fail('TRACK_CHANGED'); };
+    sameTrack();
+    if (typeof api.xg !== 'function' || typeof formatLyrics !== 'function') fail('UNSUPPORTED_CATALOG_CLIENT');
+    const response = await request('xg', { id: args.trackId, lv: -1, tv: -1, rv: -1, yv: -1 });
+    sameTrack();
+    if (response?.code !== 200) fail('INVALID_CATALOG_RESPONSE');
+    const formatted = formatLyrics(response);
+    if (!Array.isArray(formatted?.lyricLines) || formatted.lyricLines.length > 500 || formatted.lyricLines.some(l => typeof l?.lyric !== 'string' || (l.time != null && !Number.isFinite(l.time)))) fail('INVALID_CATALOG_RESPONSE');
+    const translations = formatted.tlyricLines;
+    const aligned = Array.isArray(translations) && translations.length === formatted.lyricLines.length;
+    const timedLyrics = formatted.lyricLines.map((line, i) => ({ timeSeconds: Number.isFinite(line.time) ? line.time : null, text: line.lyric.slice(0, 500),
+      ...(aligned && typeof translations[i]?.lyric === 'string' && translations[i].lyric ? { translation: translations[i].lyric.slice(0, 500) } : {}) }));
+    sameTrack();
+    return { trackId: args.trackId, timedLyrics, lyricStatus: formatted.displayType === 'pure' ? 'instrumental' : timedLyrics.length ? 'available' : 'missing', source: 'client_lyric_api' };
+  }
   const song = value => {
     const id = String(value?.id ?? '');
     const artists = value?.artists ?? value?.ar;
