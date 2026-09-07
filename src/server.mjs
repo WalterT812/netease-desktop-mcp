@@ -16,7 +16,7 @@ export function createServer(controller, {
   onShutdown = () => {}, onDrained = async () => {},
   playlists, player, catalog,
 } = {}) {
-  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.11' });
+  const server = new McpServer({ name: 'netease-desktop-mcp', version: '0.1.0-alpha.12' });
   let queue = Promise.resolve();
   let stopped = false;
   let shutdownPromise;
@@ -78,6 +78,9 @@ export function createServer(controller, {
     liked: z.boolean(), trackKey: z.string().regex(/^[a-f0-9]{24}$/),
   }, { destructiveHint: true, idempotentHint: true }, ({ liked, trackKey }) => controller.setLiked(liked, trackKey));
   const library = () => { if (!playlists) throw new Error('PLAYLIST_CONTROLLER_UNAVAILABLE'); return playlists; };
+  register('netease_rename_playlist', 'After explicit user authorization, rename one owned playlist by exact ID and expected full name. Requires NETEASE_ENABLE_PLAYLIST_RENAME=1. Refuses protected, system and collected playlists. Sends only the name update once, then verifies uncached name, exact member order, privacy, ownership and playback state. On uncertain outcome repeat the identical arguments only for read-only recovery; never restart to bypass uncertainty.', {
+    playlistId: z.string().regex(/^[1-9]\d{0,19}$/), expectedName: z.string().min(1).max(500), newName: z.string().min(1).max(40).refine(s => s.trim() === s && !/[\u0000-\u001f\u007f]/.test(s)),
+  }, {}, ({ playlistId, expectedName, newName }) => catalogController().rename(playlistId, expectedName, newName));
   const catalogController = () => { if (!catalog) throw new Error('CATALOG_UNAVAILABLE'); return catalog; };
   register('netease_get_queue', 'Read the actual desktop playback queue in display order, with current song ID, playing state, mode and volume. Validates complete queue identities before returning a bounded slice. No playback or input changes.', {
     offset: z.number().int().min(0).max(10000).default(0), limit: z.number().int().min(1).max(1000).default(100),
@@ -118,7 +121,7 @@ async function main() {
   const adapter = new DesktopAdapter();
   const music=new MusicController(adapter);
   const server = createServer(music, {
-    catalog: new CatalogController(adapter, { addEnabled: process.env.NETEASE_ENABLE_PLAYLIST_ADD === '1', protectedIds: (process.env.NETEASE_PROTECTED_PLAYLIST_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean) }),
+    catalog: new CatalogController(adapter, { addEnabled: process.env.NETEASE_ENABLE_PLAYLIST_ADD === '1', renameEnabled: process.env.NETEASE_ENABLE_PLAYLIST_RENAME === '1', protectedIds: (process.env.NETEASE_PROTECTED_PLAYLIST_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean) }),
     player:new PlayerController(adapter,music),
     playlists: new PlaylistController(adapter, { enabled: process.env.NETEASE_ENABLE_PLAYLIST_DELETE === '1', createEnabled: process.env.NETEASE_ENABLE_PLAYLIST_CREATE === '1', protectedIds: (process.env.NETEASE_PROTECTED_PLAYLIST_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean) }),
     beforeOperation: () => adapter.beginOperation(), afterOperation: () => adapter.endOperation(),

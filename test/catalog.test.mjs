@@ -318,3 +318,57 @@ test('adapter search routes to background API without Input commands or DOM sear
   await a.run('search', { query: 'First', limit: 10 });
   assert.equal(calls.length, 1); assert.equal(calls[0].fn, catalogBridge);
 });
+
+async function renameFixture() {
+  const f = playFixture();
+  f.loader.c[13] = { exports: { a(config) {
+    assert.deepEqual(json(config), { url: '/api/batch', cacheStrategy: { enable: false } });
+    return async (p, o) => { f.calls.push({ method: 'rename', p, o }); f.playlist.name = p['/api/playlist/update/name'].name; return { code: 200, '/api/playlist/update/name': { code: 200 } }; };
+  } } };
+  f.rename = { playlistId: '10', expectedName: 'Target', newName: 'English pop', protectedIds: [], baseline: await f.run('playlist_tracks', { playlistId: '10' }) };
+  return f;
+}
+
+test('rename sends only the name once, verifies uncached exact ordered members and leaves playback alone', async () => {
+  const f = await renameFixture(), before = structuredClone(f.state.playing);
+  const result = await f.run('rename_playlist', f.rename);
+  assert.equal(result.verified, true); assert.equal(result.playlistName, 'English pop'); assert.equal(result.playbackPreserved, true);
+  const writes = f.calls.filter(c => c.method === 'rename'); assert.equal(writes.length, 1);
+  assert.deepEqual(json(writes[0].p), { '/api/playlist/update/name': { id: '10', name: 'English pop' } });
+  for (const c of f.calls.filter(c => ['Rh', 'rename'].includes(c.method))) assert.deepEqual(json(c.o), { skipLocalRpcCache: true, cacheStrategy: { enable: false } });
+  assert.deepEqual(f.state.playing, before); assert.equal(f.calls.some(c => c.method === 'dispatch'), false);
+});
+
+test('rename refuses protected, collected, foreign, renamed, reordered and malformed targets before writes', async () => {
+  for (const change of [f=>f.rename.protectedIds.push('10'), f=>f.playlist.specialType=5, f=>f.state['async:hostResource'].favPlaylist.push({id:'10'}), f=>f.playlist.creator.userId=8, f=>f.playlist.name='Other', f=>f.playlist.trackIds.reverse(), f=>f.rename.newName=' ', f=>f.rename.newName='bad\nname']) {
+    const f=await renameFixture();change(f);await assert.rejects(f.run('rename_playlist',f.rename),/PROTECTED|NOT_OWNED|PLAYLIST_CHANGED|INVALID_ARGUMENT/);assert.equal(f.calls.some(c=>c.method==='rename'),false);
+  }
+});
+
+test('rename fails closed on membership, privacy, account, name or playback changes after writing', async () => {
+  for(const change of [f=>f.playlist.trackIds.reverse(),f=>f.playlist.privacy=0,f=>f.state.host.uid=8,f=>f.playlist.name='Rejected',f=>f.state.playing.playingVolume=.5]) {
+    const f=await renameFixture(),factory=f.loader.c[13].exports.a;
+    f.loader.c[13].exports.a=config=>{const request=factory(config);return async(p,o)=>{const r=await request(p,o);change(f);return r;};};
+    await assert.rejects(f.run('rename_playlist',f.rename),/RENAME_OUTCOME_UNKNOWN/);assert.equal(f.calls.filter(c=>c.method==='rename').length,1);
+  }
+});
+
+test('rename recovers a lost response using reads and never resends during recovery', async () => {
+  const f=await renameFixture(),factory=f.loader.c[13].exports.a;
+  f.loader.c[13].exports.a=config=>{const request=factory(config);return async(p,o)=>{await request(p,o);throw Error('lost');};};
+  assert.equal((await f.run('rename_playlist',f.rename)).responseLost,true);
+  assert.equal((await f.run('rename_playlist',{...f.rename,readOnlyRecovery:true})).verified,true);
+  f.playlist.trackIds.reverse();await assert.rejects(f.run('rename_playlist',{...f.rename,readOnlyRecovery:true}),/RENAME_OUTCOME_UNKNOWN/);
+  assert.equal(f.calls.filter(c=>c.method==='rename').length,1);
+});
+
+test('rename controller gates capability and pins uncertain recovery to the original members and arguments', async () => {
+  const calls=[],baseline={id:'10',title:'Target',trackIds:['1']};let fail=true;
+  const adapter={async catalogRun(action,args){calls.push({action,args});if(action==='playlist_tracks')return baseline;if(fail)throw Error('RENAME_OUTCOME_UNKNOWN');return {verified:true};}};
+  await assert.rejects(new CatalogController(adapter).rename('10','Target','New'),/DISABLED/);
+  await assert.rejects(new CatalogController(adapter,{renameEnabled:true,protectedIds:['10']}).rename('10','Target','New'),/PROTECTED/);
+  assert.equal(calls.length,0);const c=new CatalogController(adapter,{renameEnabled:true});
+  await assert.rejects(c.rename('10','Target','New'),/UNKNOWN/);
+  await assert.rejects(c.rename('10','Target','Different'),/UNKNOWN/);assert.equal(calls.length,2);
+  fail=false;await c.rename('10','Target','New');assert.equal(calls.length,3);assert.equal(calls[2].args.readOnlyRecovery,true);assert.deepEqual(calls[2].args.baseline,baseline);
+});

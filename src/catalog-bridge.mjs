@@ -3,7 +3,7 @@
 export async function catalogBridge(action, args = {}) {
   const fail = code => { throw new Error(code); };
   const validId = id => typeof id === 'string' && /^[1-9]\d{0,19}$/.test(id);
-  if (!['search', 'playlist_tracks', 'add_tracks', 'play_result', 'queue', 'play_playlist', 'lyrics'].includes(action)) fail('UNKNOWN_ACTION');
+  if (!['search', 'playlist_tracks', 'add_tracks', 'play_result', 'queue', 'play_playlist', 'lyrics', 'rename_playlist'].includes(action)) fail('UNKNOWN_ACTION');
   if (!Array.from(document.scripts).some(s => /\/app\.chunk\.d4e863d\.js(?:$|\?)/.test(s.src))) fail('UNSUPPORTED_CATALOG_CLIENT');
   const node = document.querySelector('[data-testid="tid_createplaylist_section"]');
   let fiber = node?.[Object.keys(node ?? {}).find(k => k.startsWith('__reactInternalInstance') || k.startsWith('__reactFiber'))];
@@ -36,12 +36,18 @@ export async function catalogBridge(action, args = {}) {
   const chunks = window.webpackJsonp;
   if (!Array.isArray(chunks)) fail('UNSUPPORTED_CATALOG_CLIENT');
   const key = `netease_mcp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  let loader, api, formatLyrics;
+  let loader, api, formatLyrics, renameRequest;
   const payload = [[], { [key]: (module, exports, require) => { loader = require; } }, [[key]]];
   try {
     chunks.push(payload);
     api = loader?.c?.[14]?.exports;
     if (action === 'lyrics') formatLyrics = loader?.c?.[373]?.exports?.a;
+    if (action === 'rename_playlist') {
+      const factory = loader?.c?.[13]?.exports?.a;
+      if (typeof factory !== 'function') fail('UNSUPPORTED_CATALOG_CLIENT');
+      // Client module 364 uses this batch route. Only send the name subrequest.
+      renameRequest = factory({ url: '/api/batch', cacheStrategy: { enable: false } });
+    }
     if (!api || ['V', 'Rh', 'Oh', 'zh'].some(k => typeof api[k] !== 'function')) fail('UNSUPPORTED_CATALOG_CLIENT');
   } finally {
     if (loader?.m) delete loader.m[key];
@@ -121,6 +127,42 @@ export async function catalogBridge(action, args = {}) {
   };
   const before = await readPlaylist();
   if (action === 'playlist_tracks') return before;
+  if (action === 'rename_playlist') {
+    const validName = value => typeof value === 'string' && value.trim() === value && value.length > 0 && value.length <= 40 && !/[\u0000-\u001f\u007f]/.test(value);
+    if (typeof args.expectedName !== 'string' || !validName(args.newName) || !Array.isArray(args.protectedIds) || !args.baseline) fail('INVALID_ARGUMENT');
+    const owned = p => {
+      const resource = store.getState()['async:hostResource'];
+      if (p.system || args.protectedIds.includes(p.id)) fail('PROTECTED_PLAYLIST');
+      if (!p.owned || !resource?.createPlaylist?.some(t => String(t.id) === p.id && String(t.userId) === accountId && t.subscribed === false) || resource.favPlaylist?.some(t => String(t.id) === p.id)) fail('NOT_OWNED_PLAYLIST');
+    };
+    const sameMembers = (a, b) => a.id === b.id && a.owned === b.owned && a.system === b.system && a.privacy === b.privacy && a.trackCount === b.trackCount && JSON.stringify(a.trackIds) === JSON.stringify(b.trackIds);
+    owned(before);
+    if (!sameMembers(before, args.baseline)) fail(args.readOnlyRecovery ? 'RENAME_OUTCOME_UNKNOWN' : 'PLAYLIST_CHANGED');
+    const result = (responseLost, changed = true) => ({ verified: true, changed, playlistId: before.id, previousName: args.expectedName, playlistName: args.newName, trackCount: before.trackCount, privacy: before.privacy, owned: true, membersAndOrderPreserved: true, responseLost, verificationSource: 'uncached_playlist_name_and_exact_members' });
+    if (args.readOnlyRecovery) {
+      if (before.title !== args.newName) fail('RENAME_OUTCOME_UNKNOWN');
+      return result(true);
+    }
+    if (before.title !== args.expectedName) fail('PLAYLIST_CHANGED');
+    if (before.title === args.newName) return result(false, false);
+    const latest = await readPlaylist(); owned(latest);
+    if (latest.title !== before.title || !sameMembers(latest, before)) fail('PLAYLIST_CHANGED');
+    const playback = queueSnapshot();
+    unchanged();
+    let responseLost = false;
+    try {
+      const response = await renameRequest({ '/api/playlist/update/name': { id: before.id, name: args.newName } }, noCache());
+      if (response?.code !== 200 || response['/api/playlist/update/name']?.code !== 200) responseLost = true;
+    } catch { responseLost = true; }
+    // Send once. Only reads follow, even when the write reply is missing.
+    try {
+      const after = await readPlaylist(); owned(after);
+      if (after.title !== args.newName || !sameMembers(after, before)) fail('RENAME_OUTCOME_UNKNOWN');
+      const current = queueSnapshot();
+      if (['trackIds', 'trackId', 'currentQueueId', 'playing', 'mode', 'volume'].some(k => JSON.stringify(current[k]) !== JSON.stringify(playback[k]))) fail('RENAME_OUTCOME_UNKNOWN');
+      return { ...result(responseLost), playbackPreserved: true };
+    } catch { fail('RENAME_OUTCOME_UNKNOWN'); }
+  }
   if (action === 'play_playlist') {
     if (typeof args.expectedName !== 'string' || typeof args.expectedVolume !== 'number') fail('INVALID_ARGUMENT');
     if (before.title !== args.expectedName) fail('PLAYLIST_CHANGED');

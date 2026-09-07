@@ -220,7 +220,7 @@ test('concurrent SDK tool calls serialize entire asynchronous controller operati
   ]);
 });
 
-test('real SDK stdio handshake, eighteen tools, and structured tool failure', async t => {
+test('real SDK stdio handshake, nineteen tools, and structured tool failure', async t => {
   const transport = new StdioClientTransport({ command: process.execPath,
     args: [fileURLToPath(new URL('../src/server.mjs', import.meta.url))],
     env: { ...process.env, NETEASE_MUSIC_PATH: '' }, stderr: 'pipe' });
@@ -228,11 +228,21 @@ test('real SDK stdio handshake, eighteen tools, and structured tool failure', as
   t.after(() => client.close());
   await client.connect(transport);
   const listed = await client.listTools();
-  assert.equal(listed.tools.length, 18);
+  assert.equal(listed.tools.length, 19);
   assert.equal(listed.tools.find(t => t.name === 'netease_get_status').annotations.readOnlyHint, true);
   const result = await client.callTool({ name: 'netease_get_status', arguments: {} });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /CONFIG_REQUIRED|WINDOWS_REQUIRED/);
   const invalid = await client.callTool({ name: 'netease_set_liked', arguments: { liked: 'yes' } });
   assert.equal(invalid.isError, true);
+});
+
+
+test('SDK rename schema rejects broad writes and exposes exact name arguments', async t => {
+  const calls=[],catalog={async rename(...args){calls.push(args);return {verified:true};}};
+  const server=createServer({}, {catalog}),client=new Client({name:'rename-contract',version:'1.0.0'});
+  const [a,b]=InMemoryTransport.createLinkedPair();t.after(async()=>{await client.close();await server.close();});await server.connect(b);await client.connect(a);
+  const tool=(await client.listTools()).tools.find(t=>t.name==='netease_rename_playlist');assert.equal(tool.annotations.readOnlyHint,false);
+  for(const arguments_ of [{playlistId:10,expectedName:'Old',newName:'New'},{playlistId:'10',newName:'New'},{playlistId:'10',expectedName:'Old',newName:' '},{playlistId:'10',expectedName:'Old',newName:'New',privacy:0}]) assert.equal((await client.callTool({name:tool.name,arguments:arguments_})).isError,true);
+  assert.equal(calls.length,0);assert.equal((await client.callTool({name:tool.name,arguments:{playlistId:'10',expectedName:'Old',newName:'New'}})).structuredContent.result.verified,true);assert.deepEqual(calls,[['10','Old','New']]);
 });
