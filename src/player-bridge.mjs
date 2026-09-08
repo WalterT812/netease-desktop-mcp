@@ -1,7 +1,8 @@
 // Verified player projection and narrowly scoped controls. Never return account profiles.
 export function playerBridge(action,args={}) {
   if(!['read','seek','volume','cycleMode'].includes(action))throw Error('UNKNOWN_ACTION');
-  if(!Array.from(document.scripts).some(s=>/\/app\.chunk\.d4e863d\.js(?:$|\?)/.test(s.src)))throw Error('UNSUPPORTED_PLAYLIST_CLIENT');
+  const builds=[...new Set(Array.from(document.scripts).map(s=>/\/app\.chunk\.([^/.?]+)\.js(?:$|\?)/.exec(s.src)?.[1]).filter(Boolean))];
+  if(builds.length!==1||!['d4e863d','5b23b4d'].includes(builds[0]))throw Error('UNSUPPORTED_PLAYLIST_CLIENT');
   const node=document.querySelector('[data-testid="tid_createplaylist_section"]');
   let fiber=node?.[Object.keys(node).find(k=>k.startsWith('__reactInternalInstance')||k.startsWith('__reactFiber'))],store;
   for(let depth=0;fiber&&depth++<100;fiber=fiber.return){const candidate=fiber.memoizedProps?.value?.store;if(typeof candidate?.getState==='function'){store=candidate;break;}}

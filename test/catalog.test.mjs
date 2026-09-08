@@ -372,3 +372,16 @@ test('rename controller gates capability and pins uncertain recovery to the orig
   await assert.rejects(c.rename('10','Target','Different'),/UNKNOWN/);assert.equal(calls.length,2);
   fail=false;await c.rename('10','Target','New');assert.equal(calls.length,3);assert.equal(calls[2].args.readOnlyRecovery,true);assert.deepEqual(calls[2].args.baseline,baseline);
 });
+
+test('3.1.40 resolves lyrics only from its verified formatter, not old module 373', async () => {
+ const f=fixture();f.document.scripts[0].src='orpheus://orpheus/pub/hybrid/app.chunk.5b23b4d.js';f.state.playing.onlineResourceId='7';f.api.xg=async()=>({code:200});
+ f.loader.c[373]={exports:{a:{subscribe(){throw Error('unrelated websocket module');}}}};
+ f.loader.c[376]={exports:{a:()=>({lyricLines:[{time:2,lyric:'Modern lyric'}],tlyricLines:[{time:2,lyric:'译文'}]})}};
+ assert.deepEqual(json((await f.run('lyrics',{trackId:'7'})).timedLyrics),[{timeSeconds:2,text:'Modern lyric',translation:'译文'}]);
+ assert.equal((await f.run('playlist_tracks',{playlistId:'10'})).trackCount,1);
+ delete f.loader.c[376];await assert.rejects(f.run('lyrics',{trackId:'7'}),/UNSUPPORTED_CATALOG_CLIENT/);
+});
+
+test('catalog rejects mixed and unknown app builds before any API request', async () => {
+ for(const script of ['5b23b4d','abcdef0']){const f=fixture();f.document.scripts.push({src:`orpheus://orpheus/pub/hybrid/app.chunk.${script}.js`});await assert.rejects(f.run('search',{query:'First',limit:2}),/UNSUPPORTED_CATALOG_CLIENT/);assert.equal(f.calls.length,0);}
+});

@@ -81,3 +81,8 @@ test('page refuses duplicate names, account changes and invalid create arguments
     assert.equal(f.calls.length, 0);
   }
 });
+
+test('3.1.40 library refresh preserves ownership and rejects mixed build markers', async () => {
+ const f=fixture();f.document.scripts[0].src='orpheus://orpheus/pub/hybrid/app.chunk.5b23b4d.js';assert.equal((await f.run('refresh')).created[0].owned,true);
+ f.document.scripts.push({src:'orpheus://orpheus/pub/hybrid/app.chunk.d4e863d.js'});await assert.rejects(f.run('refresh'),/UNSUPPORTED_PLAYLIST_CLIENT/);assert.equal(f.calls.length,1);
+});

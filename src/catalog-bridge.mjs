@@ -4,7 +4,8 @@ export async function catalogBridge(action, args = {}) {
   const fail = code => { throw new Error(code); };
   const validId = id => typeof id === 'string' && /^[1-9]\d{0,19}$/.test(id);
   if (!['search', 'playlist_tracks', 'add_tracks', 'play_result', 'queue', 'play_playlist', 'lyrics', 'rename_playlist'].includes(action)) fail('UNKNOWN_ACTION');
-  if (!Array.from(document.scripts).some(s => /\/app\.chunk\.d4e863d\.js(?:$|\?)/.test(s.src))) fail('UNSUPPORTED_CATALOG_CLIENT');
+  const builds = [...new Set(Array.from(document.scripts).map(s => /\/app\.chunk\.([^/.?]+)\.js(?:$|\?)/.exec(s.src)?.[1]).filter(Boolean))];
+  if (builds.length !== 1 || !['d4e863d', '5b23b4d'].includes(builds[0])) fail('UNSUPPORTED_CATALOG_CLIENT');
   const node = document.querySelector('[data-testid="tid_createplaylist_section"]');
   let fiber = node?.[Object.keys(node ?? {}).find(k => k.startsWith('__reactInternalInstance') || k.startsWith('__reactFiber'))];
   let store;
@@ -41,7 +42,9 @@ export async function catalogBridge(action, args = {}) {
   try {
     chunks.push(payload);
     api = loader?.c?.[14]?.exports;
-    if (action === 'lyrics') formatLyrics = loader?.c?.[373]?.exports?.a;
+    // Module 373 became a WebSocket observable in 3.1.40. Never discover or
+    // execute guessed module exports; each supported build has a fixed formatter.
+    if (action === 'lyrics') formatLyrics = loader?.c?.[builds[0] === '5b23b4d' ? 376 : 373]?.exports?.a;
     if (action === 'rename_playlist') {
       const factory = loader?.c?.[13]?.exports?.a;
       if (typeof factory !== 'function') fail('UNSUPPORTED_CATALOG_CLIENT');

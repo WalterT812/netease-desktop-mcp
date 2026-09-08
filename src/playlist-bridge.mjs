@@ -1,7 +1,8 @@
 // Executed in the client page. Keep self-contained; never access login storage.
 export async function playlistBridge(action, args = {}) {
   const fail = code => { throw new Error(code); };
-  if (!Array.from(document.scripts).some(s => /\/app\.chunk\.d4e863d\.js(?:$|\?)/.test(s.src))) fail('UNSUPPORTED_PLAYLIST_CLIENT');
+  const builds = [...new Set(Array.from(document.scripts).map(s => /\/app\.chunk\.([^/.?]+)\.js(?:$|\?)/.exec(s.src)?.[1]).filter(Boolean))];
+  if (builds.length !== 1 || !['d4e863d', '5b23b4d'].includes(builds[0])) fail('UNSUPPORTED_PLAYLIST_CLIENT');
   const node = document.querySelector('[data-testid="tid_createplaylist_section"]');
   if (!node) fail('UNSUPPORTED_PLAYLIST_CLIENT');
   let fiber = node[Object.keys(node).find(k => k.startsWith('__reactInternalInstance') || k.startsWith('__reactFiber'))];
