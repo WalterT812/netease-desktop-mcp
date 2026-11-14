@@ -4,6 +4,8 @@ import { runInNewContext } from 'node:vm';
 import { catalogBridge } from '../src/catalog-bridge.mjs';
 import { CatalogController } from '../src/catalog.mjs';
 import { DesktopAdapter } from '../src/adapter.mjs';
+import { attachContracts } from './a526397-contract-fixture.mjs';
+import { attachContracts as attach4fContracts, apiFactory as apiFactory4f } from './4f571d4-contract-fixture.mjs';
 
 const json = value => JSON.parse(JSON.stringify(value));
 function fixture() {
@@ -384,4 +386,77 @@ test('3.1.40 resolves lyrics only from its verified formatter, not old module 37
 
 test('catalog rejects mixed and unknown app builds before any API request', async () => {
  for(const script of ['5b23b4d','abcdef0']){const f=fixture();f.document.scripts.push({src:`orpheus://orpheus/pub/hybrid/app.chunk.${script}.js`});await assert.rejects(f.run('search',{query:'First',limit:2}),/UNSUPPORTED_CATALOG_CLIENT/);assert.equal(f.calls.length,0);}
+});
+
+test('a526397 verified factories preserve exact ordered playlist dispatch and raw volume',async()=>{
+ const f=playFixture();f.document.scripts[0].src='orpheus://orpheus/pub/hybrid/app.chunk.a526397.js';attachContracts(f.loader);
+ const result=await f.run('play_playlist',f.play);
+ assert.equal(result.verified,true);assert.equal(result.volume,.43);
+ const plays=f.calls.filter(c=>c.method==='dispatch'&&c.p.type==='playing/play');
+ assert.equal(plays.length,1);assert.deepEqual(json(plays[0].p.payload.options),{clear:true,play:true,playId:'7'});
+ assert.deepEqual(json(result.trackIds),['7','5']);assert.equal(f.chunks.length,0);
+});
+
+test('a526397 mismatched API route, missing playing module and mixed build refuse before calls',async()=>{
+ for(const breakContract of [f=>{f.loader.m[14]=f.loader.m[14].replace('/api/v3/song/detail','/wrong');},f=>{delete f.loader.c[228];},f=>{f.document.scripts.push({src:'orpheus://orpheus/pub/hybrid/app.chunk.5b23b4d.js'});},f=>{f.document.scripts[0].src='orpheus://orpheus/pub/hybrid/app.chunk.unknown.js';}]){
+  const f=playFixture();f.document.scripts[0].src='orpheus://orpheus/pub/hybrid/app.chunk.a526397.js';attachContracts(f.loader);breakContract(f);
+  await assert.rejects(f.run('play_playlist',f.play),/UNSUPPORTED_CATALOG_CLIENT/);assert.equal(f.calls.length,0);assert.equal(f.chunks.length,0);
+ }
+});
+
+test('a526397 lyrics use module 376 and reject absent formatter without dispatch',async()=>{
+ const f=playFixture();f.document.scripts[0].src='orpheus://orpheus/pub/hybrid/app.chunk.a526397.js';attachContracts(f.loader);
+ f.api.xg=async()=>({code:200});f.loader.c[376]={exports:{a:()=>({lyricLines:[{time:0,lyric:'line'}]})}};
+ assert.equal((await f.run('lyrics',{trackId:'99'})).timedLyrics[0].text,'line');delete f.loader.c[376];
+ await assert.rejects(f.run('lyrics',{trackId:'99'}),/UNSUPPORTED_CATALOG_CLIENT/);assert.equal(f.calls.length,0);
+});
+
+test('4f571d4 maps fixed API exports and reads queue and lyrics without writes', async () => {
+  const f = playFixture(); f.document.scripts[0].src = 'orpheus://orpheus/pub/hybrid/app.chunk.4f571d4.js';
+  f.api.xg = async () => ({ code: 200 }); attach4fContracts(f.loader, f.api);
+  assert.equal((await f.run('queue')).trackCount, 1);
+  assert.equal((await f.run('search', { query: 'First', limit: 2 })).items[0].id, '7');
+  assert.equal((await f.run('playlist_tracks', { playlistId: '10' })).trackCount, 2);
+  assert.equal((await f.run('lyrics', { trackId: '99' })).timedLyrics[0].text, 'line');
+  assert.equal(f.calls.some(c => c.method === 'dispatch' || c.method === 'zh'), false);
+  assert.equal(f.chunks.length, 0);
+});
+
+test('4f571d4 rejects changed route or missing playing module before API calls', async () => {
+  for (const breakContract of [
+    f => { f.loader.m[15] = apiFactory4f.replace('/api/v3/song/detail', '/wrong'); },
+    f => { delete f.loader.c[306]; },
+  ]) {
+    const f = playFixture(); f.document.scripts[0].src = 'orpheus://orpheus/pub/hybrid/app.chunk.4f571d4.js';
+    attach4fContracts(f.loader, f.api); breakContract(f);
+    await assert.rejects(f.run('search', { query: 'First', limit: 2 }), /UNSUPPORTED_CATALOG_CLIENT/);
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test('4f571d4 fixture writes dispatch once and verify exact readback', async () => {
+  const play = playFixture(); play.document.scripts[0].src = 'orpheus://orpheus/pub/hybrid/app.chunk.4f571d4.js';
+  attach4fContracts(play.loader, play.api);
+  const item = { id: '7', title: 'Song 7', artists: 'Artist', album: 'Album' };
+  assert.equal((await play.run('play_result', { item })).dispatched, true);
+  assert.equal(play.calls.filter(c => c.method === 'dispatch' && c.p.type === 'playing/play').length, 1);
+
+  const playlist = playFixture(); playlist.document.scripts[0].src = 'orpheus://orpheus/pub/hybrid/app.chunk.4f571d4.js';
+  attach4fContracts(playlist.loader, playlist.api);
+  assert.equal((await playlist.run('play_playlist', playlist.play)).verified, true);
+  assert.equal(playlist.calls.filter(c => c.method === 'dispatch' && c.p.type === 'playing/play').length, 1);
+
+  const add = fixture(); add.document.scripts[0].src = 'orpheus://orpheus/pub/hybrid/app.chunk.4f571d4.js';
+  attach4fContracts(add.loader, add.api);
+  assert.equal((await add.run('add_tracks', add.add)).verified, true);
+  assert.equal(add.calls.filter(c => c.method === 'zh').length, 1);
+});
+
+test('4f571d4 rename fixture sends one bounded batch update and verifies playback preservation', async () => {
+  const f = await renameFixture(); f.document.scripts[0].src = 'orpheus://orpheus/pub/hybrid/app.chunk.4f571d4.js';
+  attach4fContracts(f.loader, f.api);
+  f.loader.m[12] = '/api/batch/ /batch/';
+  f.loader.c[12] = f.loader.c[13];
+  assert.equal((await f.run('rename_playlist', f.rename)).verified, true);
+  assert.equal(f.calls.filter(c => c.method === 'rename').length, 1);
 });

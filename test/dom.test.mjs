@@ -22,6 +22,19 @@ test('status reads explicit player state without clicking', () => {
   assert.equal(state.liked, true);
   assert.equal(state.trackLabel, 'Example Song — Example Artist');
 });
+test('empty player remains a recognized client and status reports no current track', () => {
+  fixture();
+  document.body.innerHTML = '<div class="SearchWrapper_x"><input></div><div data-testid="tid_createplaylist_section"></div>';
+  const anchor = document.querySelector('[data-testid="tid_createplaylist_section"]');
+  anchor.__reactFiber$fixture = { memoizedProps: { value: { store: { getState: () => ({ playing: {
+    onlineResourceId: '', resourceName: '', isLoadingFirst: false, restoreResource: false,
+  } }) } } } };
+  assert.deepEqual(inspectDom('probe'), { recognized: true });
+  assert.deepEqual(inspectDom('status'), { title: null, artists: null, trackLabel: null, playing: null, liked: null });
+  anchor.__reactFiber$fixture.memoizedProps.value.store.getState = () => ({ playing: { onlineResourceId: '7' } });
+  assert.deepEqual(inspectDom('probe'), { recognized: false });
+  assert.throws(() => inspectDom('status'), /CONTROL_NOT_FOUND/);
+});
 test('unknown heart state remains unknown despite a generic like title', () => {
   fixture();
   assert.equal(inspectDom('status').liked, null);

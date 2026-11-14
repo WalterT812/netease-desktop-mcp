@@ -62,7 +62,7 @@ export class DesktopAdapter {
       this.assertOpen();
       if (matches.length !== 1) {
         for (const connection of matches) connection.disconnect();
-        throw new Error(matches.length ? 'AMBIGUOUS_MUSIC_TARGET' : 'UNSUPPORTED_CLIENT: Main player UI was not recognized. Open the standard music window with a current track.');
+        throw new Error(matches.length ? 'AMBIGUOUS_MUSIC_TARGET' : 'UNSUPPORTED_CLIENT: Main player UI was not recognized. Open the standard music window.');
       }
       this.cdp = matches[0];
       // Recheck ownership after discovery to reduce local port-reuse races.

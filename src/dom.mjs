@@ -74,7 +74,21 @@ export function inspectDom(action, args = {}) {
     if (labels.some(v => ['播放', 'Play', '继续播放'].includes(v))) return false;
     return null;
   };
-  const getStatus = () => ({ ...song(), playing: playing(), liked: liked() });
+  const emptyPlayer = () => {
+    const nodes = all('[data-testid="tid_createplaylist_section"]');
+    if (nodes.length !== 1 || all('[class*="songPlayInfo_"]').length || all('[id="btn_pc_minibar_play"]').length) return false;
+    const node = nodes[0];
+    let fiber = node[Object.keys(node).find(k => k.startsWith('__reactInternalInstance') || k.startsWith('__reactFiber'))];
+    for (let depth = 0; fiber && depth < 100; depth++, fiber = fiber.return) {
+      const state = fiber.memoizedProps?.value?.store?.getState?.();
+      const p = state?.playing;
+      if (p) return !p.onlineResourceId && !p.resourceName && !p.isLoadingFirst && !p.restoreResource;
+    }
+    return false;
+  };
+  const getStatus = () => emptyPlayer()
+    ? { title: null, artists: null, trackLabel: null, playing: null, liked: null }
+    : ({ ...song(), playing: playing(), liked: liked() });
   const results = () => {
     const root = one('[id="page_pc_search_result"]');
     const query = text(root.querySelector('.keyword'));
@@ -89,7 +103,8 @@ export function inspectDom(action, args = {}) {
   };
   switch (action) {
     case 'probe':
-      return { recognized: all('[id="btn_pc_minibar_play"]').length === 1 && all('[class*="SearchWrapper_"] input').length === 1 };
+      return { recognized: all('[class*="SearchWrapper_"] input').length === 1 &&
+        (all('[id="btn_pc_minibar_play"]').length === 1 || emptyPlayer()) };
     case 'status': return getStatus();
     case 'playback': {
       if (typeof args.playing !== 'boolean') throw new Error('INVALID_ARGUMENT');

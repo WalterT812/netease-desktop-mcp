@@ -2,7 +2,28 @@
 export async function playlistBridge(action, args = {}) {
   const fail = code => { throw new Error(code); };
   const builds = [...new Set(Array.from(document.scripts).map(s => /\/app\.chunk\.([^/.?]+)\.js(?:$|\?)/.exec(s.src)?.[1]).filter(Boolean))];
-  if (builds.length !== 1 || !['d4e863d', '5b23b4d'].includes(builds[0])) fail('UNSUPPORTED_PLAYLIST_CLIENT');
+  if (builds.length !== 1 || !['d4e863d', '5b23b4d', '4f571d4'].includes(builds[0])) fail('UNSUPPORTED_PLAYLIST_CLIENT');
+  if (builds[0] === '4f571d4') {
+    const chunks = window.webpackJsonp;
+    if (!Array.isArray(chunks)) fail('UNSUPPORTED_PLAYLIST_CLIENT');
+    const key = `netease_library_contract_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    let loader;
+    const payload = [[], { [key]: (_module, _exports, require) => { loader = require; } }, [[key]]];
+    try {
+      chunks.push(payload);
+      const source = String(loader?.m?.[3142] ?? '');
+      if (!loader?.c?.[3142] || !source.includes('async:hostResource') ||
+        !source.includes('fetchHostPlaylist(e,t){let{payload:i}=e,{put:l,call:o,select:d}=t;') ||
+        !source.includes('createPlaylist(e,t){let{payload:i}=e,{call:l,select:a,put:o}=t;') ||
+        !source.includes('deletePlaylist(e,t){let{payload:i}=e,{call:l,put:a}=t;') ||
+        !source.includes('const{id:e,playlistType:t}=i;"user"===t?')) fail('UNSUPPORTED_PLAYLIST_CLIENT');
+    } finally {
+      if (loader?.m) delete loader.m[key];
+      if (loader?.c) delete loader.c[key];
+      const index = chunks.indexOf(payload);
+      if (index >= 0) chunks.splice(index, 1);
+    }
+  }
   const node = document.querySelector('[data-testid="tid_createplaylist_section"]');
   if (!node) fail('UNSUPPORTED_PLAYLIST_CLIENT');
   let fiber = node[Object.keys(node).find(k => k.startsWith('__reactInternalInstance') || k.startsWith('__reactFiber'))];

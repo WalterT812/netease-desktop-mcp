@@ -12,9 +12,22 @@ function fixture() {
   const calls = [];
   const store = { getState: () => state, async dispatch(action) { calls.push(action); if (action.type === 'async:hostResource/createPlaylist') return '12'; } };
   const document = { scripts: [{ src: 'orpheus://orpheus/pub/hybrid/app.chunk.d4e863d.js' }], querySelector: () => ({ __reactInternalInstance$fixture: { memoizedProps: { value: { store } } } }) };
-  const run = (action, args = {}) => runInNewContext(`(${playlistBridge.toString()})(action,args)`, { document, action, args });
+  const loader = { m: {}, c: {} };
+  const chunks = [];
+  chunks.push = function (payload) { Array.prototype.push.call(this, payload); const [id, fn] = Object.entries(payload[1])[0]; loader.m[id] = fn; loader.c[id] = {}; fn({}, {}, loader); };
+  const window = { webpackJsonp: chunks };
+  const run = (action, args = {}) => runInNewContext(`(${playlistBridge.toString()})(action,args)`, { document, window, action, args });
   const expected = { id: '11', title: 'Remove', trackCount: 2, updateTime: 1, accountId: '9' };
-  return { state, calls, document, run, expected };
+  return { state, calls, document, run, expected, loader, chunks };
+}
+
+const libraryFactory4f = 'async:hostResource;fetchHostPlaylist(e,t){let{payload:i}=e,{put:l,call:o,select:d}=t;' +
+  'createPlaylist(e,t){let{payload:i}=e,{call:l,select:a,put:o}=t;' +
+  'deletePlaylist(e,t){let{payload:i}=e,{call:l,put:a}=t;const{id:e,playlistType:t}=i;"user"===t?';
+function attach4f(f) {
+  f.document.scripts[0].src = 'orpheus://orpheus/pub/hybrid/app.chunk.4f571d4.js';
+  f.loader.m[3142] = libraryFactory4f;
+  f.loader.c[3142] = { exports: {} };
 }
 
 test('bridge reads full store and refreshes without UI input; special type 300 stays owned', async () => {
@@ -85,4 +98,20 @@ test('page refuses duplicate names, account changes and invalid create arguments
 test('3.1.40 library refresh preserves ownership and rejects mixed build markers', async () => {
  const f=fixture();f.document.scripts[0].src='orpheus://orpheus/pub/hybrid/app.chunk.5b23b4d.js';assert.equal((await f.run('refresh')).created[0].owned,true);
  f.document.scripts.push({src:'orpheus://orpheus/pub/hybrid/app.chunk.d4e863d.js'});await assert.rejects(f.run('refresh'),/UNSUPPORTED_PLAYLIST_CLIENT/);assert.equal(f.calls.length,1);
+});
+test('4f571d4 library dispatches fixed refresh, create and delete fixture actions', async () => {
+  const f = fixture(); attach4f(f);
+  assert.equal((await f.run('refresh')).created.length, 2);
+  assert.equal((await f.run('create', { name: 'New', isPrivate: true, accountId: '9' })).id, '12');
+  await f.run('delete', { expected: f.expected, protectedIds: [] });
+  assert.deepEqual(f.calls.map(c => c.type), [
+    'async:hostResource/fetchHostPlaylist', 'async:hostResource/createPlaylist', 'async:hostResource/deletePlaylist',
+  ]);
+  assert.equal(f.chunks.length, 0);
+});
+test('4f571d4 changed reducer contract fails before library dispatch', async () => {
+  const f = fixture(); attach4f(f);
+  f.loader.m[3142] = libraryFactory4f.replace('"user"===t?', '"fav"===t?');
+  await assert.rejects(f.run('delete', { expected: f.expected, protectedIds: [] }), /UNSUPPORTED_PLAYLIST_CLIENT/);
+  assert.equal(f.calls.length, 0);
 });

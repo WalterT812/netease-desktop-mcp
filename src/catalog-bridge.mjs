@@ -5,7 +5,24 @@ export async function catalogBridge(action, args = {}) {
   const validId = id => typeof id === 'string' && /^[1-9]\d{0,19}$/.test(id);
   if (!['search', 'playlist_tracks', 'add_tracks', 'play_result', 'queue', 'play_playlist', 'lyrics', 'rename_playlist'].includes(action)) fail('UNKNOWN_ACTION');
   const builds = [...new Set(Array.from(document.scripts).map(s => /\/app\.chunk\.([^/.?]+)\.js(?:$|\?)/.exec(s.src)?.[1]).filter(Boolean))];
-  if (builds.length !== 1 || !['d4e863d', '5b23b4d'].includes(builds[0])) fail('UNSUPPORTED_CATALOG_CLIENT');
+  const profiles = {
+    d4e863d: { api: 14, formatter: 373 },
+    '5b23b4d': { api: 14, formatter: 376 },
+    a526397: { api: 14, formatter: 376, playing: 228, methods: { search: 'V', tracks: 'Rh', song: 'Oh', add: 'zh', lyrics: 'xg' }, contracts: [
+      ['V', 'Pn', '/api/cloudsearch/pc'], ['Rh', 'le', '/api/v6/playlist/detail'],
+      ['Oh', 'qi', '/api/v3/song/detail'], ['zh', 'Mn', '/api/v1/playlist/manipulate/tracks'],
+      ['xg', 'So', '/api/song/lyric/v1'],
+    ] },
+    '4f571d4': { api: 15, formatter: 368, playing: 306, renameModule: 12, methods: { search: 'V', tracks: 'gi', song: 'di', add: 'Oh', lyrics: 'zg' }, contracts: [
+      ['V', 'Mn', '/api/cloudsearch/pc'], ['gi', 'ce', '/api/v6/playlist/detail'],
+      ['di', 'Wi', '/api/v3/song/detail'], ['Oh', 'In', '/api/v1/playlist/manipulate/tracks'],
+      ['zg', 'To', '/api/song/lyric/v1'],
+    ] },
+  };
+  if (builds.length !== 1 || !Object.prototype.hasOwnProperty.call(profiles, builds[0])) fail('UNSUPPORTED_CATALOG_CLIENT');
+  const profile = profiles[builds[0]];
+  if (builds[0] === 'a526397' && action === 'rename_playlist') fail('UNSUPPORTED_CATALOG_CLIENT');
+  const methods = profile.methods ?? { search: 'V', tracks: 'Rh', song: 'Oh', add: 'zh', lyrics: 'xg' };
   const node = document.querySelector('[data-testid="tid_createplaylist_section"]');
   let fiber = node?.[Object.keys(node ?? {}).find(k => k.startsWith('__reactInternalInstance') || k.startsWith('__reactFiber'))];
   let store;
@@ -31,7 +48,7 @@ export async function catalogBridge(action, args = {}) {
     if (typeof volume !== 'number' || !Number.isFinite(volume) || volume < 0 || volume > 1) fail('INVALID_QUEUE_STATE');
     return { trackIds: ordered.map(t => t.id), trackCount: ordered.length, trackId: String(p.onlineResourceId ?? ''), currentQueueId: String(p.curPlaying?.resourceId ?? ''), playing: p.playingState === 2, mode: p.playingMode, volume, volumePercent: Math.round(volume * 100), title: typeof p.resourceName === 'string' ? p.resourceName : null, source: 'desktop_queue_store' };
   };
-  if (action === 'queue') return queueSnapshot();
+  if (action === 'queue' && !profile.contracts) return queueSnapshot();
   // Webpack 4 provides no public getter. Capture its loader with a disposable
   // module, use only the already-loaded fixed module, then remove our own entry.
   const chunks = window.webpackJsonp;
@@ -41,23 +58,38 @@ export async function catalogBridge(action, args = {}) {
   const payload = [[], { [key]: (module, exports, require) => { loader = require; } }, [[key]]];
   try {
     chunks.push(payload);
-    api = loader?.c?.[14]?.exports;
+    api = loader?.c?.[profile.api]?.exports;
+    // a526397 was read from the running client, not inferred from its version.
+    // Check the fixed factory contracts without executing candidate modules.
+    if (profile.contracts) {
+      const source = String(loader?.m?.[profile.api] ?? '');
+      const playing = String(loader?.m?.[profile.playing] ?? '');
+      if (profile.contracts.some(([key, symbol, route]) => !source.includes(`n.d(t,"${key}",(function(){return ${symbol}}))`) ||
+        !source.slice(source.indexOf(`${symbol}=`), source.indexOf(`${symbol}=`) + 200).includes(route)) ||
+        !loader?.c?.[profile.playing] || !playing.includes('const He="playing"') ||
+        !playing.includes('const{tracks:e,from:t,options:a,triggerScene:l}=n') ||
+        !playing.includes('switchPlayingMode(e,t)') || !playing.includes('setVolume(e,t)')) fail('UNSUPPORTED_CATALOG_CLIENT');
+    }
     // Module 373 became a WebSocket observable in 3.1.40. Never discover or
     // execute guessed module exports; each supported build has a fixed formatter.
-    if (action === 'lyrics') formatLyrics = loader?.c?.[builds[0] === '5b23b4d' ? 376 : 373]?.exports?.a;
+    if (action === 'lyrics') formatLyrics = loader?.c?.[profile.formatter]?.exports?.a;
     if (action === 'rename_playlist') {
-      const factory = loader?.c?.[13]?.exports?.a;
-      if (typeof factory !== 'function') fail('UNSUPPORTED_CATALOG_CLIENT');
+      const moduleId = profile.renameModule ?? 13;
+      const factory = loader?.c?.[moduleId]?.exports?.a;
+      const factorySource = String(loader?.m?.[moduleId] ?? '');
+      if (typeof factory !== 'function' || (profile.renameModule &&
+        (!factorySource.includes('/api/batch/') || !factorySource.includes('/batch/')))) fail('UNSUPPORTED_CATALOG_CLIENT');
       // Client module 364 uses this batch route. Only send the name subrequest.
       renameRequest = factory({ url: '/api/batch', cacheStrategy: { enable: false } });
     }
-    if (!api || ['V', 'Rh', 'Oh', 'zh'].some(k => typeof api[k] !== 'function')) fail('UNSUPPORTED_CATALOG_CLIENT');
+    if (!api || ['search', 'tracks', 'song', 'add'].some(k => typeof api[methods[k]] !== 'function')) fail('UNSUPPORTED_CATALOG_CLIENT');
   } finally {
     if (loader?.m) delete loader.m[key];
     if (loader?.c) delete loader.c[key];
     const index = chunks.indexOf(payload);
     if (index >= 0) chunks.splice(index, 1);
   }
+  if (action === 'queue') return queueSnapshot();
   const noCache = () => ({ skipLocalRpcCache: true, cacheStrategy: { enable: false } });
   const request = async (method, parameters) => {
     try { return await api[method](parameters, noCache()); }
@@ -67,8 +99,8 @@ export async function catalogBridge(action, args = {}) {
     if (!validId(args.trackId)) fail('INVALID_ARGUMENT');
     const sameTrack = () => { unchanged(); if (String(store.getState().playing?.onlineResourceId) !== args.trackId) fail('TRACK_CHANGED'); };
     sameTrack();
-    if (typeof api.xg !== 'function' || typeof formatLyrics !== 'function') fail('UNSUPPORTED_CATALOG_CLIENT');
-    const response = await request('xg', { id: args.trackId, lv: -1, tv: -1, rv: -1, yv: -1 });
+    if (typeof api[methods.lyrics] !== 'function' || typeof formatLyrics !== 'function') fail('UNSUPPORTED_CATALOG_CLIENT');
+    const response = await request(methods.lyrics, { id: args.trackId, lv: -1, tv: -1, rv: -1, yv: -1 });
     sameTrack();
     if (response?.code !== 200) fail('INVALID_CATALOG_RESPONSE');
     const formatted = formatLyrics(response);
@@ -88,7 +120,7 @@ export async function catalogBridge(action, args = {}) {
     return { id, title: value.name, artists: artists.map(a => a.name).join('/'), album: album?.name ?? '', durationMs: value.duration ?? value.dt ?? null };
   };
   const songsById = async ids => {
-    const values = await request('Oh', { c: JSON.stringify(ids.map(id => ({ id }))) });
+    const values = await request(methods.song, { c: JSON.stringify(ids.map(id => ({ id }))) });
     unchanged();
     if (!Array.isArray(values)) fail('INVALID_CATALOG_RESPONSE');
     const mapped = values.map(song);
@@ -97,7 +129,7 @@ export async function catalogBridge(action, args = {}) {
   };
   if (action === 'search') {
     if (typeof args.query !== 'string' || !args.query.trim() || args.query.length > 200 || !Number.isInteger(args.limit) || args.limit < 1 || args.limit > 30) fail('INVALID_ARGUMENT');
-    const result = await request('V', { s: args.query, type: 1, limit: args.limit, offset: 0 });
+    const result = await request(methods.search, { s: args.query, type: 1, limit: args.limit, offset: 0 });
     unchanged();
     if (result?.code !== 200 || !result.result || !Array.isArray(result.result.songs ?? []) || !Number.isFinite(result.result.songCount)) fail('INVALID_CATALOG_RESPONSE');
     const rows = (result.result.songs ?? []).slice(0, args.limit).map(song);
@@ -118,7 +150,7 @@ export async function catalogBridge(action, args = {}) {
   }
   if (!validId(args.playlistId)) fail('INVALID_ARGUMENT');
   const readPlaylist = async () => {
-    const response = await request('Rh', { id: args.playlistId, n: 100000, s: 0 });
+    const response = await request(methods.tracks, { id: args.playlistId, n: 100000, s: 0 });
     unchanged();
     const p = response?.playlist;
     if (response?.code !== 200 || String(p?.id) !== args.playlistId || typeof p.name !== 'string' || !Array.isArray(p.trackIds) || !Number.isSafeInteger(p.trackCount) || p.trackCount < 0 || p.trackCount > 100000) fail('INVALID_CATALOG_RESPONSE');
@@ -236,7 +268,7 @@ export async function catalogBridge(action, args = {}) {
   unchanged();
   let responseLost = false;
   try {
-    const result = await request('zh', { op: 'add', pid: before.id, trackIds: JSON.stringify(missing) });
+    const result = await request(methods.add, { op: 'add', pid: before.id, trackIds: JSON.stringify(missing) });
     if (result?.code !== 200) responseLost = true;
   } catch { responseLost = true; }
   // A missing reply is not a reason to resend. Only reads follow the one write.

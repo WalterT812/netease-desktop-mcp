@@ -1,12 +1,40 @@
 // Verified player projection and narrowly scoped controls. Never return account profiles.
 export function playerBridge(action,args={}) {
-  if(!['read','seek','volume','cycleMode'].includes(action))throw Error('UNKNOWN_ACTION');
+  if(!['read','seek','volume','cycleMode','mode'].includes(action))throw Error('UNKNOWN_ACTION');
   const builds=[...new Set(Array.from(document.scripts).map(s=>/\/app\.chunk\.([^/.?]+)\.js(?:$|\?)/.exec(s.src)?.[1]).filter(Boolean))];
-  if(builds.length!==1||!['d4e863d','5b23b4d'].includes(builds[0]))throw Error('UNSUPPORTED_PLAYLIST_CLIENT');
+  if(builds.length!==1||!['d4e863d','5b23b4d','a526397','4f571d4'].includes(builds[0]))throw Error('UNSUPPORTED_PLAYLIST_CLIENT');
+  if(builds[0]==='a526397'||builds[0]==='4f571d4'){
+    if(action==='cycleMode')throw Error('UNSUPPORTED_CONTROL_LAYOUT');
+    const chunks=window.webpackJsonp;
+    if(!Array.isArray(chunks))throw Error('UNSUPPORTED_PLAYLIST_CLIENT');
+    const key=`netease_player_contract_${Date.now()}_${Math.random().toString(36).slice(2)}`;let loader;
+    const payload=[[],{[key]:(m,e,r)=>{loader=r}},[[key]]];
+    try{
+      chunks.push(payload);
+      const moduleId=builds[0]==='4f571d4'?306:228;
+      const source=String(loader?.m?.[moduleId]??'');
+      if(!loader?.c?.[moduleId]||!source.includes('const He="playing"')||
+        !source.includes('setVolume(e,t){let{payload:n}=e,{select:r}=t;return function*(){const{volume:e}=n;')||
+        !source.includes('i.AudioPlayer.setVolume(e)')||
+        !source.includes('switchPlayingMode(e,t){let{payload:n}=e,{put:r,select:o,call:a}=t;')||
+        !source.includes('const{duration:e=0}=n'))throw Error('UNSUPPORTED_PLAYLIST_CLIENT');
+    }finally{
+      if(loader?.m)delete loader.m[key];if(loader?.c)delete loader.c[key];
+      const index=chunks.indexOf(payload);if(index>=0)chunks.splice(index,1);
+    }
+  }
   const node=document.querySelector('[data-testid="tid_createplaylist_section"]');
   let fiber=node?.[Object.keys(node).find(k=>k.startsWith('__reactInternalInstance')||k.startsWith('__reactFiber'))],store;
   for(let depth=0;fiber&&depth++<100;fiber=fiber.return){const candidate=fiber.memoizedProps?.value?.store;if(typeof candidate?.getState==='function'){store=candidate;break;}}
   const p=store?.getState()?.playing;if(!p)throw Error('UNSUPPORTED_PLAYLIST_CLIENT');
+  if(action==='mode'){
+    // Background-only replacement for the one-shot wake script's private guard.
+    const ordinary=['playOrder','playCycle','playRandom','playOneCycle'];
+    if(!ordinary.includes(args.mode)||!ordinary.includes(args.expectedMode))throw Error('INVALID_ARGUMENT');
+    if(p.playingMode!==args.expectedMode||store.getState()['async:listenTogether']?.status!=='alone'||typeof store.dispatch!=='function')throw Error('UNSUPPORTED_CONTROL_LAYOUT');
+    if(p.playingMode===args.mode)return {dispatched:false};
+    return Promise.resolve(store.dispatch({type:'playing/switchPlayingMode',payload:{playingMode:args.mode,triggerScene:'playlist'}})).then(()=>({dispatched:true}));
+  }
   if(action==='cycleMode'){
     const labels={playOrder:'顺序播放',playCycle:'列表循环',playOneCycle:'单曲循环',playRandom:'随机播放'};
     if(typeof args.expectedMode!=='string'||!Object.prototype.hasOwnProperty.call(labels,args.expectedMode))throw Error('INVALID_ARGUMENT');

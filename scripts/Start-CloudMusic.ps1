@@ -30,7 +30,7 @@ if ($runningMusic.Count -gt 0) {
         Where-Object { $_.Path -ieq $resolvedMusicPath } |
         Stop-Process -ErrorAction Stop
 }
-Start-Process -FilePath $resolvedMusicPath -ArgumentList "--remote-debugging-port=$Port",'--remote-debugging-address=127.0.0.1' -WindowStyle Hidden
+Start-Process -FilePath $resolvedMusicPath -ArgumentList "--remote-debugging-port=$Port",'--remote-debugging-address=127.0.0.1' -WorkingDirectory (Split-Path -Parent $resolvedMusicPath) -WindowStyle Hidden
 $ready = $false
 for ($attempt = 0; $attempt -lt 20; $attempt++) {
     Start-Sleep -Milliseconds 500
